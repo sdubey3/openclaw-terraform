@@ -1,11 +1,11 @@
 # Security group for OpenClaw EC2 instance
 resource "aws_security_group" "openclaw" {
-  name        = "openclaw-${var.environment}"
+  name        = "${var.project_name}-${var.environment}"
   description = "Security group for OpenClaw Discord bot"
-  vpc_id      = data.aws_vpc.default.id
+  vpc_id      = var.vpc_id
 
   tags = {
-    Name = "openclaw-${var.environment}"
+    Name = "${var.project_name}-${var.environment}"
   }
 }
 
@@ -17,18 +17,18 @@ resource "aws_vpc_security_group_egress_rule" "all_outbound" {
   cidr_ipv4         = "0.0.0.0/0"
 
   tags = {
-    Name = "openclaw-all-outbound"
+    Name = "${var.project_name}-all-outbound"
   }
 }
 
 # EFS security group
 resource "aws_security_group" "efs" {
-  name        = "openclaw-efs-${var.environment}"
+  name        = "${var.project_name}-efs-${var.environment}"
   description = "Security group for OpenClaw EFS"
-  vpc_id      = data.aws_vpc.default.id
+  vpc_id      = var.vpc_id
 
   tags = {
-    Name = "openclaw-efs-${var.environment}"
+    Name = "${var.project_name}-efs-${var.environment}"
   }
 }
 

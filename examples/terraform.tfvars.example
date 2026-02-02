@@ -1,4 +1,4 @@
-# Copy this file to terraform.tfvars and fill in your values
+# Copy this file to environments/production/terraform.tfvars and fill in your values
 # terraform.tfvars should NOT be committed to version control
 
 # AWS region to deploy resources

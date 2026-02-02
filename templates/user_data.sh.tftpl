@@ -1,0 +1,167 @@
+#!/bin/bash
+
+# Log all output
+exec > >(tee /var/log/user-data.log) 2>&1
+echo "Starting user data script at $(date)"
+
+# Function to retry a command with exponential backoff
+retry_with_backoff() {
+  local max_attempts=$1
+  local delay=$2
+  local command="$${@:3}"
+  local attempt=1
+
+  while [ $attempt -le $max_attempts ]; do
+    echo "Attempt $attempt of $max_attempts: $command"
+    if eval "$command"; then
+      echo "Command succeeded on attempt $attempt"
+      return 0
+    fi
+
+    if [ $attempt -lt $max_attempts ]; then
+      echo "Command failed, waiting $delay seconds before retry..."
+      sleep $delay
+      delay=$((delay * 2))
+    fi
+    attempt=$((attempt + 1))
+  done
+
+  echo "Command failed after $max_attempts attempts"
+  return 1
+}
+
+# Update system packages
+echo "Updating system packages..."
+dnf update -y
+
+# Install EFS utilities, AWS CLI, CloudWatch agent, and SSM agent
+echo "Installing dependencies..."
+dnf install -y amazon-efs-utils aws-cli amazon-cloudwatch-agent amazon-ssm-agent
+
+# Enable and start SSM agent (required for Session Manager)
+echo "Starting SSM agent..."
+systemctl enable amazon-ssm-agent
+systemctl start amazon-ssm-agent
+
+# Install Node.js 22 (required for OpenClaw)
+echo "Installing Node.js 22..."
+dnf install -y nodejs22
+
+# Create mount point
+mkdir -p ${mount_point}
+
+# Mount EFS with TLS (with retry logic)
+echo "Mounting EFS filesystem ${efs_id}..."
+if ! retry_with_backoff 3 5 "mount -t efs -o tls ${efs_id}:/ ${mount_point}"; then
+  echo "ERROR: Failed to mount EFS after multiple attempts"
+  # Signal failure to CloudWatch
+  aws cloudwatch put-metric-data \
+    --namespace "OpenClaw" \
+    --metric-name "UserDataFailure" \
+    --value 1 \
+    --dimensions Environment=${environment} \
+    --region ${aws_region} || true
+  exit 1
+fi
+
+# Add to fstab for persistence across reboots
+echo "${efs_id}:/ ${mount_point} efs _netdev,tls 0 0" >> /etc/fstab
+
+# Create data directories for OpenClaw
+mkdir -p ${mount_point}/.openclaw
+mkdir -p ${mount_point}/logs
+
+# Set permissions for ec2-user
+chown -R ec2-user:ec2-user ${mount_point}
+
+# Symlink OpenClaw config to EFS for persistence
+ln -sf ${mount_point}/.openclaw /home/ec2-user/.openclaw
+chown -h ec2-user:ec2-user /home/ec2-user/.openclaw
+
+# Configure CloudWatch agent
+cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'CWAGENT_CONFIG'
+{
+  "agent": {
+    "run_as_user": "root"
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/log/user-data.log",
+            "log_group_name": "/${project_name}/${environment}/user-data",
+            "log_stream_name": "{instance_id}",
+            "retention_in_days": 30
+          },
+          {
+            "file_path": "${mount_point}/logs/*.log",
+            "log_group_name": "/${project_name}/${environment}/application",
+            "log_stream_name": "{instance_id}",
+            "retention_in_days": 30
+          },
+          {
+            "file_path": "/var/log/openclaw-backup.log",
+            "log_group_name": "/${project_name}/${environment}/backup",
+            "log_stream_name": "{instance_id}",
+            "retention_in_days": 30
+          }
+        ]
+      }
+    }
+  }
+}
+CWAGENT_CONFIG
+
+# Start CloudWatch agent
+systemctl enable amazon-cloudwatch-agent
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config \
+  -m ec2 \
+  -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json \
+  -s
+
+# Create backup script
+cat > /usr/local/bin/openclaw-backup.sh << 'BACKUP_SCRIPT'
+#!/bin/bash
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+BACKUP_DIR="/tmp/openclaw-backup-$TIMESTAMP"
+MOUNT_POINT="${mount_point}"
+S3_BUCKET="${s3_bucket}"
+
+mkdir -p "$BACKUP_DIR"
+cp -r "$MOUNT_POINT/.openclaw" "$BACKUP_DIR/"
+tar -czf "/tmp/openclaw-backup-$TIMESTAMP.tar.gz" -C "$BACKUP_DIR" .
+aws s3 cp "/tmp/openclaw-backup-$TIMESTAMP.tar.gz" "s3://$S3_BUCKET/backups/"
+rm -rf "$BACKUP_DIR" "/tmp/openclaw-backup-$TIMESTAMP.tar.gz"
+echo "Backup completed: $TIMESTAMP"
+BACKUP_SCRIPT
+chmod +x /usr/local/bin/openclaw-backup.sh
+
+# Setup daily backup cron job (3 AM UTC)
+echo "0 3 * * * root /usr/local/bin/openclaw-backup.sh >> /var/log/openclaw-backup.log 2>&1" > /etc/cron.d/openclaw-backup
+chmod 644 /etc/cron.d/openclaw-backup
+
+# Signal success to CloudWatch
+aws cloudwatch put-metric-data \
+  --namespace "OpenClaw" \
+  --metric-name "UserDataSuccess" \
+  --value 1 \
+  --dimensions Environment=${environment} \
+  --region ${aws_region} || true
+
+echo ""
+echo "============================================"
+echo "Infrastructure setup complete at $(date)"
+echo "============================================"
+echo ""
+echo "Ready for OpenClaw installation. Connect and run:"
+echo ""
+echo "  npm install -g openclaw@latest"
+echo "  openclaw onboard --install-daemon"
+echo ""
+echo "EFS mounted at: ${mount_point}"
+echo "OpenClaw config will persist at: ${mount_point}/.openclaw"
+echo ""
+echo "Connect via: aws ssm start-session --target <instance-id>"
+echo "============================================"
