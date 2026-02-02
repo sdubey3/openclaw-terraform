@@ -104,4 +104,15 @@ module "monitoring" {
   project_name = var.project_name
   instance_id  = module.compute.instance_id
   efs_id       = module.storage.efs_id
+  alert_email  = var.alert_email
+}
+
+# CloudTrail module for API audit logging
+module "cloudtrail" {
+  source = "../../modules/cloudtrail"
+
+  environment    = var.environment
+  project_name   = var.project_name
+  aws_region     = var.aws_region
+  aws_account_id = data.aws_caller_identity.current.account_id
 }

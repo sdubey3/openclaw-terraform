@@ -47,6 +47,13 @@ systemctl start amazon-ssm-agent
 echo "Installing Node.js 22..."
 dnf install -y nodejs22
 
+# Install Docker
+echo "Installing Docker..."
+dnf install -y docker
+systemctl enable docker
+systemctl start docker
+usermod -aG docker ec2-user
+
 # Create mount point
 mkdir -p ${mount_point}
 
@@ -83,6 +90,24 @@ cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'CWAG
 {
   "agent": {
     "run_as_user": "root"
+  },
+  "metrics": {
+    "namespace": "OpenClaw",
+    "metrics_collected": {
+      "mem": {
+        "measurement": ["mem_used_percent"],
+        "metrics_collection_interval": 60
+      },
+      "disk": {
+        "measurement": ["disk_used_percent"],
+        "metrics_collection_interval": 60,
+        "resources": ["/", "${mount_point}"]
+      }
+    },
+    "append_dimensions": {
+      "InstanceId": "$${aws:InstanceId}",
+      "Environment": "${environment}"
+    }
   },
   "logs": {
     "logs_collected": {
@@ -121,20 +146,56 @@ systemctl enable amazon-cloudwatch-agent
   -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json \
   -s
 
-# Create backup script
+# Create backup script with CloudWatch metrics
 cat > /usr/local/bin/openclaw-backup.sh << 'BACKUP_SCRIPT'
 #!/bin/bash
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 BACKUP_DIR="/tmp/openclaw-backup-$TIMESTAMP"
 MOUNT_POINT="${mount_point}"
 S3_BUCKET="${s3_bucket}"
+AWS_REGION="${aws_region}"
+ENVIRONMENT="${environment}"
+
+backup_success() {
+  aws cloudwatch put-metric-data \
+    --namespace "OpenClaw" \
+    --metric-name "BackupSuccess" \
+    --value 1 \
+    --dimensions Environment=$ENVIRONMENT \
+    --region $AWS_REGION || true
+}
+
+backup_failure() {
+  aws cloudwatch put-metric-data \
+    --namespace "OpenClaw" \
+    --metric-name "BackupFailure" \
+    --value 1 \
+    --dimensions Environment=$ENVIRONMENT \
+    --region $AWS_REGION || true
+}
 
 mkdir -p "$BACKUP_DIR"
-cp -r "$MOUNT_POINT/.openclaw" "$BACKUP_DIR/"
-tar -czf "/tmp/openclaw-backup-$TIMESTAMP.tar.gz" -C "$BACKUP_DIR" .
-aws s3 cp "/tmp/openclaw-backup-$TIMESTAMP.tar.gz" "s3://$S3_BUCKET/backups/"
+if ! cp -r "$MOUNT_POINT/.openclaw" "$BACKUP_DIR/"; then
+  echo "ERROR: Failed to copy data"
+  backup_failure
+  exit 1
+fi
+
+if ! tar -czf "/tmp/openclaw-backup-$TIMESTAMP.tar.gz" -C "$BACKUP_DIR" .; then
+  echo "ERROR: Failed to create archive"
+  backup_failure
+  exit 1
+fi
+
+if ! aws s3 cp "/tmp/openclaw-backup-$TIMESTAMP.tar.gz" "s3://$S3_BUCKET/backups/"; then
+  echo "ERROR: Failed to upload to S3"
+  backup_failure
+  exit 1
+fi
+
 rm -rf "$BACKUP_DIR" "/tmp/openclaw-backup-$TIMESTAMP.tar.gz"
 echo "Backup completed: $TIMESTAMP"
+backup_success
 BACKUP_SCRIPT
 chmod +x /usr/local/bin/openclaw-backup.sh
 

@@ -1,6 +1,11 @@
+# Random suffix to avoid naming conflicts on multiple deployments
+resource "random_id" "suffix" {
+  byte_length = 4
+}
+
 # Security group for OpenClaw EC2 instance
 resource "aws_security_group" "openclaw" {
-  name        = "${var.project_name}-${var.environment}"
+  name        = "${var.project_name}-${var.environment}-${random_id.suffix.hex}"
   description = "Security group for OpenClaw Discord bot"
   vpc_id      = var.vpc_id
 
@@ -23,7 +28,7 @@ resource "aws_vpc_security_group_egress_rule" "all_outbound" {
 
 # EFS security group
 resource "aws_security_group" "efs" {
-  name        = "${var.project_name}-efs-${var.environment}"
+  name        = "${var.project_name}-efs-${var.environment}-${random_id.suffix.hex}"
   description = "Security group for OpenClaw EFS"
   vpc_id      = var.vpc_id
 

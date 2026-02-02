@@ -33,6 +33,16 @@ output "spot_request_id" {
   value       = module.compute.spot_request_id
 }
 
+output "vpc_flow_log_group" {
+  description = "CloudWatch log group name for VPC Flow Logs"
+  value       = module.networking.flow_log_group_name
+}
+
+output "cloudtrail_bucket" {
+  description = "S3 bucket for CloudTrail logs"
+  value       = module.cloudtrail.s3_bucket_name
+}
+
 output "setup_instructions" {
   description = "Instructions to complete OpenClaw setup after connecting via SSM"
   value       = <<-EOT

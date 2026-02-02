@@ -1,0 +1,14 @@
+# AWS Configuration
+aws_region = "us-east-1"
+
+# Instance Configuration
+instance_type     = "t3.medium" # Recommended: t3.medium (4GB RAM)
+use_spot_instance = true        # Use spot instances for cost savings
+spot_max_price    = ""          # Empty = on-demand price cap
+
+# Project Configuration
+project_name = "openclaw"
+environment  = "production"
+
+# Alerting (optional but recommended)
+alert_email = "your-email@example.com" # Receives CloudWatch alerts

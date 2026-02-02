@@ -12,7 +12,7 @@ variable "aws_region" {
 variable "instance_type" {
   description = "EC2 instance type"
   type        = string
-  default     = "t3.small"
+  default     = "t3.medium"
 
   validation {
     condition     = can(regex("^t3\\.(micro|small|medium|large)$", var.instance_type))
@@ -50,6 +50,12 @@ variable "use_spot_instance" {
 
 variable "spot_max_price" {
   description = "Maximum hourly price (empty = on-demand price cap)"
+  type        = string
+  default     = ""
+}
+
+variable "alert_email" {
+  description = "Email address for CloudWatch alert notifications"
   type        = string
   default     = ""
 }

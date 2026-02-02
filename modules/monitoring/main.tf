@@ -7,6 +7,15 @@ resource "aws_sns_topic" "openclaw_alerts" {
   }
 }
 
+# SNS email subscription (only created if alert_email is provided)
+resource "aws_sns_topic_subscription" "email" {
+  count = var.alert_email != "" ? 1 : 0
+
+  topic_arn = aws_sns_topic.openclaw_alerts.arn
+  protocol  = "email"
+  endpoint  = var.alert_email
+}
+
 # SNS topic policy
 resource "aws_sns_topic_policy" "openclaw_alerts" {
   arn = aws_sns_topic.openclaw_alerts.arn
@@ -116,5 +125,53 @@ resource "aws_cloudwatch_metric_alarm" "high_cpu" {
 
   tags = {
     Name = "${var.project_name}-high-cpu-${var.environment}"
+  }
+}
+
+# CloudWatch alarm for backup failures
+resource "aws_cloudwatch_metric_alarm" "backup_failure" {
+  alarm_name          = "${var.project_name}-backup-failure-${var.environment}"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "BackupFailure"
+  namespace           = "OpenClaw"
+  period              = 86400 # 24 hours
+  statistic           = "Sum"
+  threshold           = 0
+  alarm_description   = "OpenClaw backup failed"
+  alarm_actions       = [aws_sns_topic.openclaw_alerts.arn]
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    Environment = var.environment
+  }
+
+  tags = {
+    Name = "${var.project_name}-backup-failure-${var.environment}"
+  }
+}
+
+# CloudWatch alarm for high memory utilization
+resource "aws_cloudwatch_metric_alarm" "high_memory" {
+  alarm_name          = "${var.project_name}-high-memory-${var.environment}"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  metric_name         = "mem_used_percent"
+  namespace           = "OpenClaw"
+  period              = 300
+  statistic           = "Average"
+  threshold           = 80
+  alarm_description   = "Memory utilization is above 80%"
+  alarm_actions       = [aws_sns_topic.openclaw_alerts.arn]
+  ok_actions          = [aws_sns_topic.openclaw_alerts.arn]
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    InstanceId  = var.instance_id
+    Environment = var.environment
+  }
+
+  tags = {
+    Name = "${var.project_name}-high-memory-${var.environment}"
   }
 }
