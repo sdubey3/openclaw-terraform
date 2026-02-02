@@ -46,16 +46,26 @@ output "cloudtrail_bucket" {
 output "setup_instructions" {
   description = "Instructions to complete OpenClaw setup after connecting via SSM"
   value       = <<-EOT
-    # OpenClaw Setup Instructions
+    # OpenClaw Docker Compose Setup Instructions
     #
     # 1. Connect to the instance:
     aws ssm start-session --target ${module.compute.instance_id} --region ${var.aws_region} --profile admin
 
-    # 2. Install OpenClaw (run on the instance as ec2-user):
-    npm install -g openclaw@latest
-    openclaw onboard --install-daemon
+    # 2. Run the Docker setup script (as ec2-user):
+    cd /opt/openclaw/openclaw-docker
+    ./docker-setup.sh
 
-    # Your OpenClaw config will persist at /opt/openclaw/.openclaw (on EFS)
+    # The script will:
+    #   - Build the Docker image
+    #   - Run the onboarding wizard
+    #   - Generate a gateway token (saved to .env)
+    #   - Start the gateway
+
+    # 3. Access the Control UI:
+    # http://127.0.0.1:18789/
+    # Paste the token from .env into Settings
+
+    # Config persisted at: /opt/openclaw/.openclaw (on EFS)
     # Daily backups to S3: ${module.storage.s3_bucket_name}
   EOT
 }

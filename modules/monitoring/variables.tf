@@ -12,13 +12,11 @@ variable "project_name" {
 variable "instance_id" {
   description = "EC2 instance ID for monitoring"
   type        = string
-  default     = ""
 }
 
 variable "efs_id" {
   description = "EFS file system ID for monitoring"
   type        = string
-  default     = ""
 }
 
 variable "alert_email" {

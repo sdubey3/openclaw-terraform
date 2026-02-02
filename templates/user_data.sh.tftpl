@@ -54,6 +54,17 @@ systemctl enable docker
 systemctl start docker
 usermod -aG docker ec2-user
 
+# Install git (required for cloning OpenClaw repo)
+echo "Installing git..."
+dnf install -y git
+
+# Install Docker Compose v2 plugin manually (not available in AL2023 repos)
+echo "Installing Docker Compose v2..."
+mkdir -p /usr/libexec/docker/cli-plugins
+curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)" \
+  -o /usr/libexec/docker/cli-plugins/docker-compose
+chmod +x /usr/libexec/docker/cli-plugins/docker-compose
+
 # Create mount point
 mkdir -p ${mount_point}
 
@@ -84,6 +95,15 @@ chown -R ec2-user:ec2-user ${mount_point}
 # Symlink OpenClaw config to EFS for persistence
 ln -sf ${mount_point}/.openclaw /home/ec2-user/.openclaw
 chown -h ec2-user:ec2-user /home/ec2-user/.openclaw
+
+# Clone OpenClaw repo for Docker Compose setup
+echo "Cloning OpenClaw repository..."
+git clone --depth 1 https://github.com/openclaw/openclaw.git ${mount_point}/openclaw-docker
+chown -R ec2-user:ec2-user ${mount_point}/openclaw-docker
+
+# Pre-configure environment variables for docker-setup.sh
+export OPENCLAW_CONFIG_DIR=${mount_point}/.openclaw
+export OPENCLAW_WORKSPACE_DIR=${mount_point}/.openclaw/workspace
 
 # Configure CloudWatch agent
 cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'CWAGENT_CONFIG'
@@ -200,6 +220,7 @@ BACKUP_SCRIPT
 chmod +x /usr/local/bin/openclaw-backup.sh
 
 # Setup daily backup cron job (3 AM UTC)
+mkdir -p /etc/cron.d
 echo "0 3 * * * root /usr/local/bin/openclaw-backup.sh >> /var/log/openclaw-backup.log 2>&1" > /etc/cron.d/openclaw-backup
 chmod 644 /etc/cron.d/openclaw-backup
 
@@ -216,13 +237,24 @@ echo "============================================"
 echo "Infrastructure setup complete at $(date)"
 echo "============================================"
 echo ""
-echo "Ready for OpenClaw installation. Connect and run:"
+echo "OpenClaw Docker Compose is ready. To complete setup:"
 echo ""
-echo "  npm install -g openclaw@latest"
-echo "  openclaw onboard --install-daemon"
+echo "  cd ${mount_point}/openclaw-docker"
+echo "  ./docker-setup.sh"
 echo ""
-echo "EFS mounted at: ${mount_point}"
-echo "OpenClaw config will persist at: ${mount_point}/.openclaw"
+echo "The script will:"
+echo "  - Build the Docker image"
+echo "  - Run the onboarding wizard (interactive)"
+echo "  - Generate a gateway token"
+echo "  - Start the gateway"
+echo ""
+echo "After setup, access the Control UI at: http://127.0.0.1:18789/"
+echo "Config persisted at: ${mount_point}/.openclaw (on EFS)"
+echo ""
+echo "Useful commands:"
+echo "  docker compose logs -f openclaw-gateway  # View logs"
+echo "  docker compose ps                        # Check status"
+echo "  docker compose down                      # Stop gateway"
 echo ""
 echo "Connect via: aws ssm start-session --target <instance-id>"
 echo "============================================"

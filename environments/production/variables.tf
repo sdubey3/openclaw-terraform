@@ -15,8 +15,8 @@ variable "instance_type" {
   default     = "t3.medium"
 
   validation {
-    condition     = can(regex("^t3\\.(micro|small|medium|large)$", var.instance_type))
-    error_message = "Instance type must be t3.micro, t3.small, t3.medium, or t3.large."
+    condition     = can(regex("^t[34][ag]?\\.(micro|small|medium|large|xlarge)$", var.instance_type))
+    error_message = "Instance type must be t3, t3a, t4g, or t4a in sizes micro, small, medium, large, or xlarge."
   }
 }
 
