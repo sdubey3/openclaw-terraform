@@ -1,260 +1,148 @@
 #!/bin/bash
-
-# Log all output
 exec > >(tee /var/log/user-data.log) 2>&1
 echo "Starting user data script at $(date)"
 
-# Function to retry a command with exponential backoff
-retry_with_backoff() {
-  local max_attempts=$1
-  local delay=$2
-  local command="$${@:3}"
-  local attempt=1
+ENABLE_FULL_CONTAINER="${enable_full_container}"
+OPENCLAW_HOME_VOLUME="${openclaw_home_volume}"
+INSTALL_PLAYWRIGHT_BROWSERS="${install_playwright_browsers}"
 
-  while [ $attempt -le $max_attempts ]; do
-    echo "Attempt $attempt of $max_attempts: $command"
-    if eval "$command"; then
-      echo "Command succeeded on attempt $attempt"
-      return 0
-    fi
-
-    if [ $attempt -lt $max_attempts ]; then
-      echo "Command failed, waiting $delay seconds before retry..."
-      sleep $delay
-      delay=$((delay * 2))
-    fi
-    attempt=$((attempt + 1))
+retry() {
+  local n=$1 d=$2; shift 2
+  for ((i=1;i<=n;i++)); do
+    "$@" && return 0
+    ((i<n)) && sleep $d && d=$((d*2))
   done
-
-  echo "Command failed after $max_attempts attempts"
   return 1
 }
 
-# Update system packages
-echo "Updating system packages..."
+create_compose_override() {
+  [ "$ENABLE_FULL_CONTAINER" != "true" ] && return 0
+  cat > "$1/docker-compose.override.yml" << 'EOF'
+version: "3.8"
+services:
+  openclaw-gateway:
+    environment:
+      - PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
+    volumes:
+      - ${openclaw_home_volume}:/home/node
+volumes:
+  ${openclaw_home_volume}:
+    name: ${openclaw_home_volume}
+EOF
+  chown ec2-user:ec2-user "$1/docker-compose.override.yml"
+}
+
+install_pw_browsers() {
+  [ "$ENABLE_FULL_CONTAINER" != "true" ] || [ "$INSTALL_PLAYWRIGHT_BROWSERS" != "true" ] && return 0
+  cd "$1"
+  sudo -u ec2-user docker compose exec -T openclaw-gateway ls /home/node/.cache/ms-playwright/chromium-* &>/dev/null && return 0
+  if sudo -u ec2-user docker compose exec -T openclaw-gateway npx playwright install chromium 2>&1; then
+    aws cloudwatch put-metric-data --namespace OpenClaw --metric-name PlaywrightInstallSuccess --value 1 --dimensions Environment=${environment} --region ${aws_region} 2>/dev/null || true
+  else
+    aws cloudwatch put-metric-data --namespace OpenClaw --metric-name PlaywrightInstallFailure --value 1 --dimensions Environment=${environment} --region ${aws_region} 2>/dev/null || true
+  fi
+}
+
+cw_metric() { aws cloudwatch put-metric-data --namespace OpenClaw --metric-name "$1" --value 1 --dimensions "$2" --region ${aws_region} 2>/dev/null || true; }
+
 dnf update -y
-
-# Install EFS utilities, AWS CLI, CloudWatch agent, and SSM agent
-echo "Installing dependencies..."
-dnf install -y amazon-efs-utils aws-cli amazon-cloudwatch-agent amazon-ssm-agent
-
-# Enable and start SSM agent (required for Session Manager)
-echo "Starting SSM agent..."
-systemctl enable amazon-ssm-agent
-systemctl start amazon-ssm-agent
-
-# Install Node.js 22 (required for OpenClaw)
-echo "Installing Node.js 22..."
-dnf install -y nodejs22
-
-# Install Docker
-echo "Installing Docker..."
-dnf install -y docker
-systemctl enable docker
-systemctl start docker
+dnf install -y amazon-efs-utils aws-cli amazon-cloudwatch-agent amazon-ssm-agent nodejs22 docker git
+systemctl enable --now amazon-ssm-agent docker
 usermod -aG docker ec2-user
 
-# Install git (required for cloning OpenClaw repo)
-echo "Installing git..."
-dnf install -y git
-
-# Install Docker Compose v2 plugin manually (not available in AL2023 repos)
-echo "Installing Docker Compose v2..."
 mkdir -p /usr/libexec/docker/cli-plugins
-curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)" \
-  -o /usr/libexec/docker/cli-plugins/docker-compose
+curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)" -o /usr/libexec/docker/cli-plugins/docker-compose
 chmod +x /usr/libexec/docker/cli-plugins/docker-compose
 
-# Create mount point
 mkdir -p ${mount_point}
-
-# Mount EFS with TLS (with retry logic)
-echo "Mounting EFS filesystem ${efs_id}..."
-if ! retry_with_backoff 3 5 "mount -t efs -o tls ${efs_id}:/ ${mount_point}"; then
-  echo "ERROR: Failed to mount EFS after multiple attempts"
-  # Signal failure to CloudWatch
-  aws cloudwatch put-metric-data \
-    --namespace "OpenClaw" \
-    --metric-name "UserDataFailure" \
-    --value 1 \
-    --dimensions Environment=${environment} \
-    --region ${aws_region} || true
+if ! retry 3 5 mount -t efs -o tls ${efs_id}:/ ${mount_point}; then
+  cw_metric UserDataFailure Environment=${environment}
   exit 1
 fi
-
-# Add to fstab for persistence across reboots
 echo "${efs_id}:/ ${mount_point} efs _netdev,tls 0 0" >> /etc/fstab
 
-# Create data directories for OpenClaw
-mkdir -p ${mount_point}/.openclaw
-mkdir -p ${mount_point}/logs
-
-# Set permissions for ec2-user
+mkdir -p ${mount_point}/.openclaw ${mount_point}/logs
 chown -R ec2-user:ec2-user ${mount_point}
-
-# Symlink OpenClaw config to EFS for persistence
 ln -sf ${mount_point}/.openclaw /home/ec2-user/.openclaw
 chown -h ec2-user:ec2-user /home/ec2-user/.openclaw
 
-# Clone OpenClaw repo for Docker Compose setup
-echo "Cloning OpenClaw repository..."
-git clone --depth 1 https://github.com/openclaw/openclaw.git ${mount_point}/openclaw-docker
-chown -R ec2-user:ec2-user ${mount_point}/openclaw-docker
+CFG="${mount_point}/.openclaw"
+REPO="${mount_point}/openclaw-docker"
+sleep 3
 
-# Pre-configure environment variables for docker-setup.sh
-export OPENCLAW_CONFIG_DIR=${mount_point}/.openclaw
-export OPENCLAW_WORKSPACE_DIR=${mount_point}/.openclaw/workspace
-
-# Configure CloudWatch agent
-cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'CWAGENT_CONFIG'
-{
-  "agent": {
-    "run_as_user": "root"
-  },
-  "metrics": {
-    "namespace": "OpenClaw",
-    "metrics_collected": {
-      "mem": {
-        "measurement": ["mem_used_percent"],
-        "metrics_collection_interval": 60
-      },
-      "disk": {
-        "measurement": ["disk_used_percent"],
-        "metrics_collection_interval": 60,
-        "resources": ["/", "${mount_point}"]
-      }
-    },
-    "append_dimensions": {
-      "InstanceId": "$${aws:InstanceId}",
-      "Environment": "${environment}"
-    }
-  },
-  "logs": {
-    "logs_collected": {
-      "files": {
-        "collect_list": [
-          {
-            "file_path": "/var/log/user-data.log",
-            "log_group_name": "/${project_name}/${environment}/user-data",
-            "log_stream_name": "{instance_id}",
-            "retention_in_days": 30
-          },
-          {
-            "file_path": "${mount_point}/logs/*.log",
-            "log_group_name": "/${project_name}/${environment}/application",
-            "log_stream_name": "{instance_id}",
-            "retention_in_days": 30
-          },
-          {
-            "file_path": "/var/log/openclaw-backup.log",
-            "log_group_name": "/${project_name}/${environment}/backup",
-            "log_stream_name": "{instance_id}",
-            "retention_in_days": 30
-          }
-        ]
-      }
-    }
-  }
-}
-CWAGENT_CONFIG
-
-# Start CloudWatch agent
-systemctl enable amazon-cloudwatch-agent
-/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
-  -a fetch-config \
-  -m ec2 \
-  -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json \
-  -s
-
-# Create backup script with CloudWatch metrics
-cat > /usr/local/bin/openclaw-backup.sh << 'BACKUP_SCRIPT'
+if [ -s "$CFG/.env" ] && [ -s "$CFG/openclaw.json" ] && [ -s "$REPO/docker-compose.yml" ] && grep -q "OPENCLAW_GATEWAY_TOKEN" "$CFG/.env" 2>/dev/null; then
+  echo "Auto-resuming..."
+  cd $REPO
+  [ -d .git ] && sudo -u ec2-user git pull origin main 2>&1 || { cd ${mount_point}; rm -rf openclaw-docker; sudo -u ec2-user git clone --depth 1 https://github.com/openclaw/openclaw.git openclaw-docker; }
+  chown -R ec2-user:ec2-user $REPO
+  set -a; source $CFG/.env 2>/dev/null || { cw_metric InstanceResumeFailure "Environment=${environment},Reason=EnvLoadFailed"; exit 1; }; set +a
+  export OPENCLAW_CONFIG_DIR="$CFG" OPENCLAW_WORKSPACE_DIR="$CFG/workspace" OPENCLAW_IMAGE="$${OPENCLAW_IMAGE:-openclaw:local}" OPENCLAW_GATEWAY_PORT="$${OPENCLAW_GATEWAY_PORT:-18789}" OPENCLAW_BRIDGE_PORT="$${OPENCLAW_BRIDGE_PORT:-18790}" OPENCLAW_GATEWAY_BIND="$${OPENCLAW_GATEWAY_BIND:-lan}"
+  [ -z "$OPENCLAW_GATEWAY_TOKEN" ] && { cw_metric InstanceResumeFailure "Environment=${environment},Reason=MissingToken"; exit 1; }
+  cd $REPO
+  create_compose_override "$REPO"
+  docker images "$OPENCLAW_IMAGE" | grep -q "$OPENCLAW_IMAGE" || { sudo -u ec2-user docker build -t "$OPENCLAW_IMAGE" -f Dockerfile . || { cw_metric InstanceResumeFailure "Environment=${environment},Reason=DockerBuildFailed"; exit 1; }; }
+  sudo -u ec2-user docker compose down 2>/dev/null || true
+  if sudo -u ec2-user docker compose up -d openclaw-gateway; then
+    sleep 10
+    if sudo -u ec2-user docker compose ps | grep -q "openclaw-gateway.*Up\|openclaw-gateway.*running"; then
+      echo "Gateway resumed"
+      cw_metric InstanceResumeSuccess Environment=${environment}
+      RESUME_SUCCESS=true
+      install_pw_browsers "$REPO"
+    else
+      cw_metric InstanceResumeFailure "Environment=${environment},Reason=StartupFailed"
+      RESUME_SUCCESS=false
+    fi
+  else
+    cw_metric InstanceResumeFailure "Environment=${environment},Reason=DockerComposeFailed"
+    RESUME_SUCCESS=false
+  fi
+else
+  echo "First-time setup required"
+  [ ! -d "$REPO" ] && { git clone --depth 1 https://github.com/openclaw/openclaw.git $REPO; chown -R ec2-user:ec2-user $REPO; }
+  export OPENCLAW_CONFIG_DIR=$CFG OPENCLAW_WORKSPACE_DIR=$CFG/workspace
+  create_compose_override "$REPO"
+  if [ "$ENABLE_FULL_CONTAINER" = "true" ]; then
+    cat > "$REPO/install-playwright.sh" << 'PWEOF'
 #!/bin/bash
-TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-BACKUP_DIR="/tmp/openclaw-backup-$TIMESTAMP"
-MOUNT_POINT="${mount_point}"
-S3_BUCKET="${s3_bucket}"
-AWS_REGION="${aws_region}"
-ENVIRONMENT="${environment}"
-
-backup_success() {
-  aws cloudwatch put-metric-data \
-    --namespace "OpenClaw" \
-    --metric-name "BackupSuccess" \
-    --value 1 \
-    --dimensions Environment=$ENVIRONMENT \
-    --region $AWS_REGION || true
-}
-
-backup_failure() {
-  aws cloudwatch put-metric-data \
-    --namespace "OpenClaw" \
-    --metric-name "BackupFailure" \
-    --value 1 \
-    --dimensions Environment=$ENVIRONMENT \
-    --region $AWS_REGION || true
-}
-
-mkdir -p "$BACKUP_DIR"
-if ! cp -r "$MOUNT_POINT/.openclaw" "$BACKUP_DIR/"; then
-  echo "ERROR: Failed to copy data"
-  backup_failure
-  exit 1
+set -e
+docker compose ps | grep -q "openclaw-gateway.*Up\|openclaw-gateway.*running" || { echo "Start gateway first"; exit 1; }
+docker compose exec openclaw-gateway npx playwright install chromium
+echo "Playwright installed"
+PWEOF
+    chmod +x "$REPO/install-playwright.sh"
+    chown ec2-user:ec2-user "$REPO/install-playwright.sh"
+  fi
+  RESUME_SUCCESS=false
 fi
 
-if ! tar -czf "/tmp/openclaw-backup-$TIMESTAMP.tar.gz" -C "$BACKUP_DIR" .; then
-  echo "ERROR: Failed to create archive"
-  backup_failure
-  exit 1
-fi
+cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << CWCFG
+{"agent":{"run_as_user":"root"},"metrics":{"namespace":"OpenClaw","metrics_collected":{"mem":{"measurement":["mem_used_percent"],"metrics_collection_interval":60},"disk":{"measurement":["disk_used_percent"],"metrics_collection_interval":60,"resources":["/","${mount_point}"]}},"append_dimensions":{"InstanceId":"\$${aws:InstanceId}","Environment":"${environment}"}},"logs":{"logs_collected":{"files":{"collect_list":[{"file_path":"/var/log/user-data.log","log_group_name":"/${project_name}/${environment}/user-data","log_stream_name":"{instance_id}","retention_in_days":30},{"file_path":"${mount_point}/logs/*.log","log_group_name":"/${project_name}/${environment}/application","log_stream_name":"{instance_id}","retention_in_days":30},{"file_path":"/var/log/openclaw-backup.log","log_group_name":"/${project_name}/${environment}/backup","log_stream_name":"{instance_id}","retention_in_days":30}]}}}}
+CWCFG
+systemctl enable amazon-cloudwatch-agent
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
 
-if ! aws s3 cp "/tmp/openclaw-backup-$TIMESTAMP.tar.gz" "s3://$S3_BUCKET/backups/"; then
-  echo "ERROR: Failed to upload to S3"
-  backup_failure
-  exit 1
-fi
-
-rm -rf "$BACKUP_DIR" "/tmp/openclaw-backup-$TIMESTAMP.tar.gz"
-echo "Backup completed: $TIMESTAMP"
-backup_success
-BACKUP_SCRIPT
+cat > /usr/local/bin/openclaw-backup.sh << 'BKUP'
+#!/bin/bash
+TS=$(date +%Y%m%d-%H%M%S)
+MP="${mount_point}"
+S3="${s3_bucket}"
+RG="${aws_region}"
+EN="${environment}"
+metric() { aws cloudwatch put-metric-data --namespace OpenClaw --metric-name "$1" --value 1 --dimensions Environment=$EN --region $RG || true; }
+mkdir -p /tmp/bk-$TS
+cp -r "$MP/.openclaw" /tmp/bk-$TS/ || { metric BackupFailure; exit 1; }
+tar -czf /tmp/bk-$TS.tar.gz -C /tmp/bk-$TS . || { metric BackupFailure; exit 1; }
+aws s3 cp /tmp/bk-$TS.tar.gz s3://$S3/backups/ || { metric BackupFailure; exit 1; }
+rm -rf /tmp/bk-$TS /tmp/bk-$TS.tar.gz
+metric BackupSuccess
+BKUP
 chmod +x /usr/local/bin/openclaw-backup.sh
 
-# Setup daily backup cron job (3 AM UTC)
 mkdir -p /etc/cron.d
 echo "0 3 * * * root /usr/local/bin/openclaw-backup.sh >> /var/log/openclaw-backup.log 2>&1" > /etc/cron.d/openclaw-backup
 chmod 644 /etc/cron.d/openclaw-backup
 
-# Signal success to CloudWatch
-aws cloudwatch put-metric-data \
-  --namespace "OpenClaw" \
-  --metric-name "UserDataSuccess" \
-  --value 1 \
-  --dimensions Environment=${environment} \
-  --region ${aws_region} || true
-
-echo ""
-echo "============================================"
-echo "Infrastructure setup complete at $(date)"
-echo "============================================"
-echo ""
-echo "OpenClaw Docker Compose is ready. To complete setup:"
-echo ""
-echo "  cd ${mount_point}/openclaw-docker"
-echo "  ./docker-setup.sh"
-echo ""
-echo "The script will:"
-echo "  - Build the Docker image"
-echo "  - Run the onboarding wizard (interactive)"
-echo "  - Generate a gateway token"
-echo "  - Start the gateway"
-echo ""
-echo "After setup, access the Control UI at: http://127.0.0.1:18789/"
-echo "Config persisted at: ${mount_point}/.openclaw (on EFS)"
-echo ""
-echo "Useful commands:"
-echo "  docker compose logs -f openclaw-gateway  # View logs"
-echo "  docker compose ps                        # Check status"
-echo "  docker compose down                      # Stop gateway"
-echo ""
-echo "Connect via: aws ssm start-session --target <instance-id>"
-echo "============================================"
+cw_metric UserDataSuccess Environment=${environment}
+echo "==== Setup complete at $(date) ===="
+[ "$RESUME_SUCCESS" = "true" ] && echo "Gateway running: http://127.0.0.1:18789/" || echo "Run: sudo su - ec2-user && cd ${mount_point}/openclaw-docker && ./docker-setup.sh"

@@ -49,9 +49,10 @@ data "aws_caller_identity" "current" {}
 module "networking" {
   source = "../../modules/networking"
 
-  vpc_id       = data.aws_vpc.default.id
-  environment  = var.environment
-  project_name = var.project_name
+  vpc_id               = data.aws_vpc.default.id
+  environment          = var.environment
+  project_name         = var.project_name
+  dashboard_allowed_ip = var.dashboard_allowed_ip
 }
 
 # Storage module - depends on networking for EFS security group
@@ -92,6 +93,13 @@ module "compute" {
   environment           = var.environment
   project_name          = var.project_name
   aws_region            = var.aws_region
+  root_volume_size      = var.root_volume_size
+
+  # Full-featured container support
+  enable_full_container        = var.enable_full_container
+  openclaw_home_volume         = var.openclaw_home_volume
+  openclaw_docker_apt_packages = var.openclaw_docker_apt_packages
+  install_playwright_browsers  = var.install_playwright_browsers
 
   depends_on = [module.storage]
 }

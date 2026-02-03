@@ -19,3 +19,9 @@ variable "enable_flow_logs" {
   type        = bool
   default     = true
 }
+
+variable "dashboard_allowed_ip" {
+  description = "IP address (CIDR format) allowed to access OpenClaw dashboard on port 18789. Leave empty for no inbound access."
+  type        = string
+  default     = ""
+}

@@ -14,17 +14,21 @@ resource "aws_spot_instance_request" "openclaw" {
   spot_price                     = var.spot_max_price != "" ? var.spot_max_price : null
 
   user_data = base64encode(templatefile("${path.module}/../../templates/user_data.sh.tftpl", {
-    efs_id       = var.efs_id
-    mount_point  = "/opt/openclaw"
-    s3_bucket    = var.s3_bucket_name
-    aws_region   = var.aws_region
-    project_name = var.project_name
-    environment  = var.environment
+    efs_id                       = var.efs_id
+    mount_point                  = "/opt/openclaw"
+    s3_bucket                    = var.s3_bucket_name
+    aws_region                   = var.aws_region
+    project_name                 = var.project_name
+    environment                  = var.environment
+    enable_full_container        = var.enable_full_container
+    openclaw_home_volume         = var.openclaw_home_volume
+    openclaw_docker_apt_packages = var.openclaw_docker_apt_packages
+    install_playwright_browsers  = var.install_playwright_browsers
   }))
 
   root_block_device {
     volume_type           = "gp3"
-    volume_size           = 8
+    volume_size           = var.root_volume_size
     delete_on_termination = true
     encrypted             = true
   }
@@ -55,17 +59,21 @@ resource "aws_instance" "openclaw" {
   iam_instance_profile   = var.instance_profile_name
 
   user_data = base64encode(templatefile("${path.module}/../../templates/user_data.sh.tftpl", {
-    efs_id       = var.efs_id
-    mount_point  = "/opt/openclaw"
-    s3_bucket    = var.s3_bucket_name
-    aws_region   = var.aws_region
-    project_name = var.project_name
-    environment  = var.environment
+    efs_id                       = var.efs_id
+    mount_point                  = "/opt/openclaw"
+    s3_bucket                    = var.s3_bucket_name
+    aws_region                   = var.aws_region
+    project_name                 = var.project_name
+    environment                  = var.environment
+    enable_full_container        = var.enable_full_container
+    openclaw_home_volume         = var.openclaw_home_volume
+    openclaw_docker_apt_packages = var.openclaw_docker_apt_packages
+    install_playwright_browsers  = var.install_playwright_browsers
   }))
 
   root_block_device {
     volume_type           = "gp3"
-    volume_size           = 8
+    volume_size           = var.root_volume_size
     delete_on_termination = true
     encrypted             = true
   }

@@ -20,6 +20,17 @@ variable "instance_type" {
   }
 }
 
+variable "root_volume_size" {
+  description = "Size of the root EBS volume in GB"
+  type        = number
+  default     = 20
+
+  validation {
+    condition     = var.root_volume_size >= 8 && var.root_volume_size <= 100
+    error_message = "Root volume size must be between 8 and 100 GB."
+  }
+}
+
 variable "environment" {
   description = "Environment tag"
   type        = string
@@ -43,9 +54,9 @@ variable "project_name" {
 }
 
 variable "use_spot_instance" {
-  description = "Use spot instance for cost savings"
+  description = "Use spot instance for cost savings (on-demand is more stable)"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "spot_max_price" {
@@ -58,4 +69,45 @@ variable "alert_email" {
   description = "Email address for CloudWatch alert notifications"
   type        = string
   default     = ""
+}
+
+variable "dashboard_allowed_ip" {
+  description = "IP address (CIDR format) allowed to access OpenClaw dashboard on port 18789. Leave empty for no inbound access (SSM only). Use /32 suffix for single IP (e.g., 74.71.49.233/32)."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.dashboard_allowed_ip == "" || can(cidrhost(var.dashboard_allowed_ip, 0))
+    error_message = "Dashboard allowed IP must be empty or a valid CIDR notation (e.g., 74.71.49.233/32 for single IP)."
+  }
+}
+
+# Full-featured container variables
+variable "enable_full_container" {
+  description = "Enable full-featured container support with persistent /home/node volume, Playwright dependencies, and browser auto-installation"
+  type        = bool
+  default     = false
+}
+
+variable "openclaw_home_volume" {
+  description = "Docker named volume for persistent /home/node in the container"
+  type        = string
+  default     = "openclaw_home"
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9_-]{0,63}$", var.openclaw_home_volume))
+    error_message = "Volume name must start with a letter and contain only lowercase letters, numbers, underscores, and hyphens (max 64 chars)."
+  }
+}
+
+variable "openclaw_docker_apt_packages" {
+  description = "Space-separated list of APT packages to install in the Docker image for Playwright support"
+  type        = string
+  default     = "libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2"
+}
+
+variable "install_playwright_browsers" {
+  description = "Automatically install Playwright browsers on auto-resume (requires enable_full_container=true)"
+  type        = bool
+  default     = true
 }

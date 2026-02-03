@@ -26,6 +26,23 @@ resource "aws_vpc_security_group_egress_rule" "all_outbound" {
   }
 }
 
+# Conditional inbound access to OpenClaw dashboard (port 18789)
+# Only created when dashboard_allowed_ip is specified
+resource "aws_vpc_security_group_ingress_rule" "dashboard_access" {
+  count = var.dashboard_allowed_ip != "" ? 1 : 0
+
+  security_group_id = aws_security_group.openclaw.id
+  description       = "Allow dashboard access from specified IP"
+  ip_protocol       = "tcp"
+  from_port         = 18789
+  to_port           = 18789
+  cidr_ipv4         = var.dashboard_allowed_ip
+
+  tags = {
+    Name = "${var.project_name}-dashboard-access"
+  }
+}
+
 # EFS security group
 resource "aws_security_group" "efs" {
   name        = "${var.project_name}-efs-${var.environment}-${random_id.suffix.hex}"

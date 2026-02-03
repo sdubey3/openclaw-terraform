@@ -175,3 +175,27 @@ resource "aws_cloudwatch_metric_alarm" "high_memory" {
     Name = "${var.project_name}-high-memory-${var.environment}"
   }
 }
+
+# CloudWatch alarm for instance resume failures
+resource "aws_cloudwatch_metric_alarm" "instance_resume_failure" {
+  alarm_name          = "${var.project_name}-instance-resume-failure-${var.environment}"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "InstanceResumeFailure"
+  namespace           = "OpenClaw"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 0
+  alarm_description   = "Alert when OpenClaw instance resume fails"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    Environment = var.environment
+  }
+
+  alarm_actions = [aws_sns_topic.openclaw_alerts.arn]
+
+  tags = {
+    Name = "${var.project_name}-instance-resume-failure-${var.environment}"
+  }
+}
