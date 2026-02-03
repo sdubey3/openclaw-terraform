@@ -2,9 +2,9 @@
 aws_region = "us-east-1"
 
 # Instance Configuration
-instance_type     = "t3.medium" # Recommended: t3.medium (4GB RAM)
-use_spot_instance = true        # Use spot instances for cost savings
-spot_max_price    = ""          # Empty = on-demand price cap
+instance_type = "t3.medium" # Recommended: t3.medium (4GB RAM)
+# Note: On-demand instances only (spot support removed for stability)
+# Full container mode is always enabled (persistent /home/node, Homebrew, CLI tools)
 
 # Project Configuration
 project_name = "openclaw"
@@ -12,3 +12,10 @@ environment  = "production"
 
 # Alerting (optional but recommended)
 alert_email = "your-email@example.com" # Receives CloudWatch alerts
+
+# Remote Dashboard Access (optional - set to "" for SSM-only access)
+# dashboard_allowed_ip = "74.71.49.233/32"
+
+# Full Container Mode Customization (optional)
+# openclaw_home_volume = "openclaw_home"              # Docker volume name
+# install_playwright_browsers = true                  # Auto-install browsers on resume

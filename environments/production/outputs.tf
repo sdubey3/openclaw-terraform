@@ -28,11 +28,6 @@ output "efs_file_system_id" {
   value       = module.storage.efs_id
 }
 
-output "spot_request_id" {
-  description = "Spot request ID (if using spot)"
-  value       = module.compute.spot_request_id
-}
-
 output "vpc_flow_log_group" {
   description = "CloudWatch log group name for VPC Flow Logs"
   value       = module.networking.flow_log_group_name
@@ -44,8 +39,8 @@ output "cloudtrail_bucket" {
 }
 
 locals {
-  setup_instructions_full = <<-EOT
-    # OpenClaw Docker Compose Setup Instructions (Full Container Mode)
+  setup_instructions = <<-EOT
+    # OpenClaw Docker Compose Setup Instructions (Full Container Mode - Always Enabled)
     #
     # 1. Connect to the instance:
     aws ssm start-session --target ${module.compute.instance_id} --region ${var.aws_region} --profile admin
@@ -67,34 +62,10 @@ locals {
     # http://127.0.0.1:18789/
     # Paste the token from .env into Settings
 
-    # Full container features enabled:
+    # Full container features (always enabled):
     #   - Persistent /home/node via Docker volume: ${var.openclaw_home_volume}
-    #   - Playwright system dependencies installed
-    #   - Browsers auto-installed on spot instance replacement
-
-    # Config persisted at: /opt/openclaw/.openclaw (on EFS)
-    # Daily backups to S3: ${module.storage.s3_bucket_name}
-  EOT
-
-  setup_instructions_standard = <<-EOT
-    # OpenClaw Docker Compose Setup Instructions
-    #
-    # 1. Connect to the instance:
-    aws ssm start-session --target ${module.compute.instance_id} --region ${var.aws_region} --profile admin
-
-    # 2. Run the Docker setup script (as ec2-user):
-    cd /opt/openclaw/openclaw-docker
-    ./docker-setup.sh
-
-    # The script will:
-    #   - Build the Docker image
-    #   - Run the onboarding wizard
-    #   - Generate a gateway token (saved to .env)
-    #   - Start the gateway
-
-    # 3. Access the Control UI:
-    # http://127.0.0.1:18789/
-    # Paste the token from .env into Settings
+    #   - Homebrew, CLI tools, and auth tokens persist across rebuilds
+    #   - Playwright browsers auto-install on instance restart
 
     # Config persisted at: /opt/openclaw/.openclaw (on EFS)
     # Daily backups to S3: ${module.storage.s3_bucket_name}
@@ -103,5 +74,5 @@ locals {
 
 output "setup_instructions" {
   description = "Instructions to complete OpenClaw setup after connecting via SSM"
-  value       = var.enable_full_container ? local.setup_instructions_full : local.setup_instructions_standard
+  value       = local.setup_instructions
 }

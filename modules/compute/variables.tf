@@ -34,18 +34,6 @@ variable "s3_bucket_name" {
   type        = string
 }
 
-variable "use_spot_instance" {
-  description = "Use spot instance for cost savings (on-demand is more stable)"
-  type        = bool
-  default     = false
-}
-
-variable "spot_max_price" {
-  description = "Maximum hourly price for spot instance (empty = on-demand price cap)"
-  type        = string
-  default     = ""
-}
-
 variable "environment" {
   description = "Environment name (e.g., production, staging)"
   type        = string
@@ -62,13 +50,7 @@ variable "aws_region" {
   type        = string
 }
 
-# Full-featured container variables
-variable "enable_full_container" {
-  description = "Enable full-featured container support with persistent /home/node volume and Playwright"
-  type        = bool
-  default     = false
-}
-
+# Full-featured container variables (always enabled)
 variable "openclaw_home_volume" {
   description = "Docker named volume for persistent /home/node in the container"
   type        = string

@@ -113,7 +113,7 @@ terraform output ssm_connect_command
 | Module | Purpose |
 |--------|---------|
 | `bootstrap` | Creates S3 bucket for Terraform state with versioning and encryption |
-| `compute` | EC2 instance (Spot or On-Demand), user data script, instance configuration |
+| `compute` | EC2 on-demand instance with full container mode (persistent /home/node volume) |
 | `networking` | Security groups (EC2, EFS), VPC Flow Logs to CloudWatch |
 | `storage` | EFS file system with mount target, S3 bucket for daily backups |
 | `iam` | IAM role, instance profile, policies for S3, SSM, CloudWatch |
@@ -152,9 +152,15 @@ terraform output ssm_connect_command
 
 ### Data Persistence
 
-- Config directory: `/opt/openclaw/.openclaw` (on EFS)
+**EFS Storage:**
+- Config directory: `/opt/openclaw/.openclaw` (OpenClaw config, skills, memories)
 - Daily backups: Uploaded to S3 at 3 AM UTC
 - Backup logs: `/var/log/openclaw-backup.log`
+
+**Docker Volume (Full Container Mode - Always Enabled):**
+- Persistent `/home/node` directory inside container
+- Includes: Homebrew, CLI tools (gog, gh), auth tokens, npm cache, Playwright browsers
+- Survives container rebuilds and instance recreation
 
 ### Automatic Resume on Instance Restart
 
@@ -238,34 +244,25 @@ By default, the OpenClaw dashboard is only accessible via SSM Session Manager. T
 
 **Security Note:** Only the specified IP address can access the dashboard. To disable remote access, set `dashboard_allowed_ip = ""` and run `terraform apply`.
 
-### Full-Featured Container Mode (Optional)
+### Full-Featured Container Mode (Always Enabled)
 
-Enable full-featured container support for Playwright browser automation and persistent home directory.
+The infrastructure now runs in full-featured container mode by default, which provides:
 
-1. **Enable in terraform.tfvars:**
-   ```hcl
-   enable_full_container = true
-   ```
+**Persistent Storage:**
+- Docker named volume (`openclaw_home`) automatically created for `/home/node`
+- Homebrew installations persist across container rebuilds
+- CLI tools (gog, gh, etc.) persist across instance recreation
+- Authentication tokens persist in `/home/node/.config/`
+- npm cache and Playwright browsers persist
 
-2. **Apply the change:**
-   ```bash
-   terraform apply
-   ```
-
-3. **First-time setup:** After completing `docker-setup.sh`, run:
-   ```bash
-   ./install-playwright.sh
-   ```
-
-**What it does:**
-- Creates Docker named volume (`openclaw_home`) for persistent `/home/node`
-- Sets `PLAYWRIGHT_BROWSERS_PATH` via `docker-compose.override.yml`
-- Auto-installs Playwright browsers on instance restart
-- Survives `git pull` of upstream OpenClaw repo
+**Automatic Setup:**
+- `docker-compose.override.yml` automatically created on instance boot
+- Playwright browsers auto-install on instance restart (configurable)
+- `install-playwright.sh` script created for manual browser installation
 
 **Customization:**
 ```hcl
-# Custom volume name
+# Custom volume name (in terraform.tfvars)
 openclaw_home_volume = "my_custom_volume"
 
 # Custom APT packages (default includes Playwright deps)
@@ -275,7 +272,11 @@ openclaw_docker_apt_packages = "libnss3 libnspr4 ..."
 install_playwright_browsers = false
 ```
 
-See `docs/full-container.md` for detailed documentation.
+**Manual Playwright Installation:**
+After completing `docker-setup.sh`, you can manually install browsers:
+```bash
+./install-playwright.sh
+```
 
 ## Development Guidelines
 
@@ -336,11 +337,8 @@ When working with this repository, **never use `head` or `tail` commands** to re
 | `root_volume_size` | `20` | Root EBS volume size in GB (8-100) |
 | `environment` | `production` | Environment tag |
 | `project_name` | `openclaw` | Project name for resource naming |
-| `use_spot_instance` | `false` | Use Spot instance for cost savings |
-| `spot_max_price` | `""` | Max hourly price (empty = on-demand cap) |
 | `alert_email` | `""` | Email for CloudWatch alert notifications |
 | `dashboard_allowed_ip` | `""` | IP address (CIDR) for dashboard access (port 18789) |
-| `enable_full_container` | `false` | Enable full container with persistent home + Playwright |
-| `openclaw_home_volume` | `openclaw_home` | Docker volume name for /home/node |
-| `openclaw_docker_apt_packages` | `<playwright deps>` | APT packages for Playwright support |
-| `install_playwright_browsers` | `true` | Auto-install browsers on resume |
+| `openclaw_home_volume` | `openclaw_home` | Docker volume name for /home/node (always enabled) |
+| `openclaw_docker_apt_packages` | `<playwright deps>` | APT packages for Playwright support (always installed) |
+| `install_playwright_browsers` | `true` | Auto-install Playwright browsers on resume |

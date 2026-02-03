@@ -78,6 +78,7 @@ module "iam" {
 
 # Compute module - depends on all other modules
 # depends_on ensures EFS mount target DNS is ready before instance boots
+# Full container mode is always enabled (persistent /home/node, Homebrew, CLI tools, Playwright)
 module "compute" {
   source = "../../modules/compute"
 
@@ -88,15 +89,12 @@ module "compute" {
   instance_profile_name = module.iam.instance_profile_name
   efs_id                = module.storage.efs_id
   s3_bucket_name        = module.storage.s3_bucket_name
-  use_spot_instance     = var.use_spot_instance
-  spot_max_price        = var.spot_max_price
   environment           = var.environment
   project_name          = var.project_name
   aws_region            = var.aws_region
   root_volume_size      = var.root_volume_size
 
-  # Full-featured container support
-  enable_full_container        = var.enable_full_container
+  # Full-featured container support (always enabled)
   openclaw_home_volume         = var.openclaw_home_volume
   openclaw_docker_apt_packages = var.openclaw_docker_apt_packages
   install_playwright_browsers  = var.install_playwright_browsers

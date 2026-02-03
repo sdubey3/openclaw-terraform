@@ -2,7 +2,7 @@
 exec > >(tee /var/log/user-data.log) 2>&1
 echo "Starting user data script at $(date)"
 
-ENABLE_FULL_CONTAINER="${enable_full_container}"
+# Full container mode is always enabled
 OPENCLAW_HOME_VOLUME="${openclaw_home_volume}"
 INSTALL_PLAYWRIGHT_BROWSERS="${install_playwright_browsers}"
 
@@ -16,7 +16,6 @@ retry() {
 }
 
 create_compose_override() {
-  [ "$ENABLE_FULL_CONTAINER" != "true" ] && return 0
   cat > "$1/docker-compose.override.yml" << 'EOF'
 version: "3.8"
 services:
@@ -33,7 +32,7 @@ EOF
 }
 
 install_pw_browsers() {
-  [ "$ENABLE_FULL_CONTAINER" != "true" ] || [ "$INSTALL_PLAYWRIGHT_BROWSERS" != "true" ] && return 0
+  [ "$INSTALL_PLAYWRIGHT_BROWSERS" != "true" ] && return 0
   cd "$1"
   sudo -u ec2-user docker compose exec -T openclaw-gateway ls /home/node/.cache/ms-playwright/chromium-* &>/dev/null && return 0
   if sudo -u ec2-user docker compose exec -T openclaw-gateway npx playwright install chromium 2>&1; then
@@ -102,17 +101,15 @@ else
   [ ! -d "$REPO" ] && { git clone --depth 1 https://github.com/openclaw/openclaw.git $REPO; chown -R ec2-user:ec2-user $REPO; }
   export OPENCLAW_CONFIG_DIR=$CFG OPENCLAW_WORKSPACE_DIR=$CFG/workspace
   create_compose_override "$REPO"
-  if [ "$ENABLE_FULL_CONTAINER" = "true" ]; then
-    cat > "$REPO/install-playwright.sh" << 'PWEOF'
+  cat > "$REPO/install-playwright.sh" << 'PWEOF'
 #!/bin/bash
 set -e
 docker compose ps | grep -q "openclaw-gateway.*Up\|openclaw-gateway.*running" || { echo "Start gateway first"; exit 1; }
 docker compose exec openclaw-gateway npx playwright install chromium
 echo "Playwright installed"
 PWEOF
-    chmod +x "$REPO/install-playwright.sh"
-    chown ec2-user:ec2-user "$REPO/install-playwright.sh"
-  fi
+  chmod +x "$REPO/install-playwright.sh"
+  chown ec2-user:ec2-user "$REPO/install-playwright.sh"
   RESUME_SUCCESS=false
 fi
 

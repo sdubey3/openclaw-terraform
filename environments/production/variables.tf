@@ -53,18 +53,6 @@ variable "project_name" {
   }
 }
 
-variable "use_spot_instance" {
-  description = "Use spot instance for cost savings (on-demand is more stable)"
-  type        = bool
-  default     = false
-}
-
-variable "spot_max_price" {
-  description = "Maximum hourly price (empty = on-demand price cap)"
-  type        = string
-  default     = ""
-}
-
 variable "alert_email" {
   description = "Email address for CloudWatch alert notifications"
   type        = string
@@ -82,13 +70,7 @@ variable "dashboard_allowed_ip" {
   }
 }
 
-# Full-featured container variables
-variable "enable_full_container" {
-  description = "Enable full-featured container support with persistent /home/node volume, Playwright dependencies, and browser auto-installation"
-  type        = bool
-  default     = false
-}
-
+# Full-featured container variables (always enabled)
 variable "openclaw_home_volume" {
   description = "Docker named volume for persistent /home/node in the container"
   type        = string
@@ -107,7 +89,7 @@ variable "openclaw_docker_apt_packages" {
 }
 
 variable "install_playwright_browsers" {
-  description = "Automatically install Playwright browsers on auto-resume (requires enable_full_container=true)"
+  description = "Automatically install Playwright browsers on auto-resume"
   type        = bool
   default     = true
 }
