@@ -14,11 +14,6 @@ variable "instance_id" {
   type        = string
 }
 
-variable "efs_id" {
-  description = "EFS file system ID for monitoring"
-  type        = string
-}
-
 variable "alert_email" {
   description = "Email address for alert notifications (optional)"
   type        = string

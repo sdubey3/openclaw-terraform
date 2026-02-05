@@ -49,6 +49,12 @@ dnf install -y amazon-efs-utils aws-cli amazon-cloudwatch-agent amazon-ssm-agent
 systemctl enable --now amazon-ssm-agent docker
 usermod -aG docker ec2-user
 
+mkdir -p /etc/docker
+cat > /etc/docker/daemon.json << 'DOCKERCFG'
+{"log-driver":"json-file","log-opts":{"max-size":"50m","max-file":"3"}}
+DOCKERCFG
+systemctl restart docker
+
 mkdir -p /usr/libexec/docker/cli-plugins
 curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)" -o /usr/libexec/docker/cli-plugins/docker-compose
 chmod +x /usr/libexec/docker/cli-plugins/docker-compose
@@ -114,31 +120,10 @@ PWEOF
 fi
 
 cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << CWCFG
-{"agent":{"run_as_user":"root"},"metrics":{"namespace":"OpenClaw","metrics_collected":{"mem":{"measurement":["mem_used_percent"],"metrics_collection_interval":60},"disk":{"measurement":["disk_used_percent"],"metrics_collection_interval":60,"resources":["/","${mount_point}"]}},"append_dimensions":{"InstanceId":"\$${aws:InstanceId}","Environment":"${environment}"}},"logs":{"logs_collected":{"files":{"collect_list":[{"file_path":"/var/log/user-data.log","log_group_name":"/${project_name}/${environment}/user-data","log_stream_name":"{instance_id}","retention_in_days":30},{"file_path":"${mount_point}/logs/*.log","log_group_name":"/${project_name}/${environment}/application","log_stream_name":"{instance_id}","retention_in_days":30},{"file_path":"/var/log/openclaw-backup.log","log_group_name":"/${project_name}/${environment}/backup","log_stream_name":"{instance_id}","retention_in_days":30}]}}}}
+{"agent":{"run_as_user":"root"},"metrics":{"namespace":"OpenClaw","metrics_collected":{"mem":{"measurement":["mem_used_percent"],"metrics_collection_interval":60},"disk":{"measurement":["disk_used_percent"],"metrics_collection_interval":60,"resources":["/","${mount_point}"]}},"append_dimensions":{"InstanceId":"\$${aws:InstanceId}","Environment":"${environment}"}},"logs":{"logs_collected":{"files":{"collect_list":[{"file_path":"/var/log/user-data.log","log_group_name":"/${project_name}/${environment}/user-data","log_stream_name":"{instance_id}","retention_in_days":30},{"file_path":"${mount_point}/logs/*.log","log_group_name":"/${project_name}/${environment}/application","log_stream_name":"{instance_id}","retention_in_days":30},{"file_path":"/var/lib/docker/containers/*/*-json.log","log_group_name":"/${project_name}/${environment}/docker","log_stream_name":"{instance_id}","retention_in_days":7}]}}}}
 CWCFG
 systemctl enable amazon-cloudwatch-agent
 /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
-
-cat > /usr/local/bin/openclaw-backup.sh << 'BKUP'
-#!/bin/bash
-TS=$(date +%Y%m%d-%H%M%S)
-MP="${mount_point}"
-S3="${s3_bucket}"
-RG="${aws_region}"
-EN="${environment}"
-metric() { aws cloudwatch put-metric-data --namespace OpenClaw --metric-name "$1" --value 1 --dimensions Environment=$EN --region $RG || true; }
-mkdir -p /tmp/bk-$TS
-cp -r "$MP/.openclaw" /tmp/bk-$TS/ || { metric BackupFailure; exit 1; }
-tar -czf /tmp/bk-$TS.tar.gz -C /tmp/bk-$TS . || { metric BackupFailure; exit 1; }
-aws s3 cp /tmp/bk-$TS.tar.gz s3://$S3/backups/ || { metric BackupFailure; exit 1; }
-rm -rf /tmp/bk-$TS /tmp/bk-$TS.tar.gz
-metric BackupSuccess
-BKUP
-chmod +x /usr/local/bin/openclaw-backup.sh
-
-mkdir -p /etc/cron.d
-echo "0 3 * * * root /usr/local/bin/openclaw-backup.sh >> /var/log/openclaw-backup.log 2>&1" > /etc/cron.d/openclaw-backup
-chmod 644 /etc/cron.d/openclaw-backup
 
 cw_metric UserDataSuccess Environment=${environment}
 echo "==== Setup complete at $(date) ===="

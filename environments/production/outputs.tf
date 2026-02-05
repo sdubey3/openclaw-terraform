@@ -8,11 +8,6 @@ output "instance_public_ip" {
   value       = module.compute.public_ip
 }
 
-output "s3_bucket_name" {
-  description = "S3 bucket name for backups"
-  value       = module.storage.s3_bucket_name
-}
-
 output "ssm_connect_command" {
   description = "Connect via SSM Session Manager"
   value       = "aws ssm start-session --target ${module.compute.instance_id} --region ${var.aws_region}"
@@ -31,11 +26,6 @@ output "efs_file_system_id" {
 output "vpc_flow_log_group" {
   description = "CloudWatch log group name for VPC Flow Logs"
   value       = module.networking.flow_log_group_name
-}
-
-output "cloudtrail_bucket" {
-  description = "S3 bucket for CloudTrail logs"
-  value       = module.cloudtrail.s3_bucket_name
 }
 
 locals {
@@ -68,7 +58,7 @@ locals {
     #   - Playwright browsers auto-install on instance restart
 
     # Config persisted at: /opt/openclaw/.openclaw (on EFS)
-    # Daily backups to S3: ${module.storage.s3_bucket_name}
+    # EFS automatic backups enabled via AWS Backup
   EOT
 }
 

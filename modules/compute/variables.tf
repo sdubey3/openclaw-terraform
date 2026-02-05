@@ -29,11 +29,6 @@ variable "efs_id" {
   type        = string
 }
 
-variable "s3_bucket_name" {
-  description = "S3 bucket name for backups"
-  type        = string
-}
-
 variable "environment" {
   description = "Environment name (e.g., production, staging)"
   type        = string

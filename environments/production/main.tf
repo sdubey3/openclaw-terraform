@@ -65,13 +65,12 @@ module "storage" {
   efs_security_group_id = module.networking.efs_security_group_id
 }
 
-# IAM module - depends on storage for S3 bucket ARN
+# IAM module
 module "iam" {
   source = "../../modules/iam"
 
   environment    = var.environment
   project_name   = var.project_name
-  s3_bucket_arn  = module.storage.s3_bucket_arn
   aws_region     = var.aws_region
   aws_account_id = data.aws_caller_identity.current.account_id
 }
@@ -88,7 +87,6 @@ module "compute" {
   security_group_id     = module.networking.ec2_security_group_id
   instance_profile_name = module.iam.instance_profile_name
   efs_id                = module.storage.efs_id
-  s3_bucket_name        = module.storage.s3_bucket_name
   environment           = var.environment
   project_name          = var.project_name
   aws_region            = var.aws_region
@@ -109,16 +107,5 @@ module "monitoring" {
   environment  = var.environment
   project_name = var.project_name
   instance_id  = module.compute.instance_id
-  efs_id       = module.storage.efs_id
   alert_email  = var.alert_email
-}
-
-# CloudTrail module for API audit logging
-module "cloudtrail" {
-  source = "../../modules/cloudtrail"
-
-  environment    = var.environment
-  project_name   = var.project_name
-  aws_region     = var.aws_region
-  aws_account_id = data.aws_caller_identity.current.account_id
 }

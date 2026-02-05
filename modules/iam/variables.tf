@@ -9,11 +9,6 @@ variable "project_name" {
   default     = "openclaw"
 }
 
-variable "s3_bucket_arn" {
-  description = "ARN of the S3 bucket for backup access"
-  type        = string
-}
-
 variable "aws_region" {
   description = "AWS region for SSM parameter ARN construction"
   type        = string

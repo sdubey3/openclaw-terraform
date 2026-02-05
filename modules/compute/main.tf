@@ -10,7 +10,6 @@ resource "aws_instance" "openclaw" {
   user_data = base64encode(templatefile("${path.module}/../../templates/user_data.sh.tftpl", {
     efs_id                       = var.efs_id
     mount_point                  = "/opt/openclaw"
-    s3_bucket                    = var.s3_bucket_name
     aws_region                   = var.aws_region
     project_name                 = var.project_name
     environment                  = var.environment

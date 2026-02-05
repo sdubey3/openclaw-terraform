@@ -59,98 +59,6 @@ resource "aws_cloudwatch_metric_alarm" "instance_status_check" {
   }
 }
 
-# CloudWatch alarm for EFS burst credit balance
-resource "aws_cloudwatch_metric_alarm" "efs_burst_credit_balance" {
-  alarm_name          = "${var.project_name}-efs-burst-credits-${var.environment}"
-  comparison_operator = "LessThanThreshold"
-  evaluation_periods  = 1
-  metric_name         = "BurstCreditBalance"
-  namespace           = "AWS/EFS"
-  period              = 300
-  statistic           = "Average"
-  threshold           = 1000000000000 # 1 TB of burst credits (low warning)
-  alarm_description   = "EFS burst credit balance is low"
-  alarm_actions       = [aws_sns_topic.openclaw_alerts.arn]
-  ok_actions          = [aws_sns_topic.openclaw_alerts.arn]
-
-  dimensions = {
-    FileSystemId = var.efs_id
-  }
-
-  tags = {
-    Name = "${var.project_name}-efs-burst-credits-${var.environment}"
-  }
-}
-
-# CloudWatch alarm for user data setup failure
-resource "aws_cloudwatch_metric_alarm" "user_data_failure" {
-  alarm_name          = "${var.project_name}-user-data-failure-${var.environment}"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
-  metric_name         = "UserDataFailure"
-  namespace           = "OpenClaw"
-  period              = 300
-  statistic           = "Sum"
-  threshold           = 0
-  alarm_description   = "EC2 user data script failed"
-  alarm_actions       = [aws_sns_topic.openclaw_alerts.arn]
-  treat_missing_data  = "notBreaching"
-
-  dimensions = {
-    Environment = var.environment
-  }
-
-  tags = {
-    Name = "${var.project_name}-user-data-failure-${var.environment}"
-  }
-}
-
-# CloudWatch alarm for high CPU utilization
-resource "aws_cloudwatch_metric_alarm" "high_cpu" {
-  alarm_name          = "${var.project_name}-high-cpu-${var.environment}"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 3
-  metric_name         = "CPUUtilization"
-  namespace           = "AWS/EC2"
-  period              = 300
-  statistic           = "Average"
-  threshold           = 80
-  alarm_description   = "EC2 CPU utilization is above 80%"
-  alarm_actions       = [aws_sns_topic.openclaw_alerts.arn]
-  ok_actions          = [aws_sns_topic.openclaw_alerts.arn]
-
-  dimensions = {
-    InstanceId = var.instance_id
-  }
-
-  tags = {
-    Name = "${var.project_name}-high-cpu-${var.environment}"
-  }
-}
-
-# CloudWatch alarm for backup failures
-resource "aws_cloudwatch_metric_alarm" "backup_failure" {
-  alarm_name          = "${var.project_name}-backup-failure-${var.environment}"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
-  metric_name         = "BackupFailure"
-  namespace           = "OpenClaw"
-  period              = 86400 # 24 hours
-  statistic           = "Sum"
-  threshold           = 0
-  alarm_description   = "OpenClaw backup failed"
-  alarm_actions       = [aws_sns_topic.openclaw_alerts.arn]
-  treat_missing_data  = "notBreaching"
-
-  dimensions = {
-    Environment = var.environment
-  }
-
-  tags = {
-    Name = "${var.project_name}-backup-failure-${var.environment}"
-  }
-}
-
 # CloudWatch alarm for high memory utilization
 resource "aws_cloudwatch_metric_alarm" "high_memory" {
   alarm_name          = "${var.project_name}-high-memory-${var.environment}"
@@ -173,29 +81,5 @@ resource "aws_cloudwatch_metric_alarm" "high_memory" {
 
   tags = {
     Name = "${var.project_name}-high-memory-${var.environment}"
-  }
-}
-
-# CloudWatch alarm for instance resume failures
-resource "aws_cloudwatch_metric_alarm" "instance_resume_failure" {
-  alarm_name          = "${var.project_name}-instance-resume-failure-${var.environment}"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
-  metric_name         = "InstanceResumeFailure"
-  namespace           = "OpenClaw"
-  period              = 300
-  statistic           = "Sum"
-  threshold           = 0
-  alarm_description   = "Alert when OpenClaw instance resume fails"
-  treat_missing_data  = "notBreaching"
-
-  dimensions = {
-    Environment = var.environment
-  }
-
-  alarm_actions = [aws_sns_topic.openclaw_alerts.arn]
-
-  tags = {
-    Name = "${var.project_name}-instance-resume-failure-${var.environment}"
   }
 }

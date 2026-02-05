@@ -20,42 +20,6 @@ resource "aws_iam_role" "openclaw" {
   }
 }
 
-# IAM policy for S3 bucket access (least privilege)
-resource "aws_iam_policy" "openclaw_s3" {
-  name        = "${var.project_name}-s3-access-${var.environment}"
-  description = "Allow OpenClaw EC2 instance to access backup S3 bucket"
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "ListBucket"
-        Effect = "Allow"
-        Action = [
-          "s3:ListBucket"
-        ]
-        Resource = var.s3_bucket_arn
-      },
-      {
-        Sid    = "ReadWriteObjects"
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject",
-          "s3:PutObject",
-          "s3:DeleteObject"
-        ]
-        Resource = "${var.s3_bucket_arn}/*"
-      }
-    ]
-  })
-}
-
-# Attach S3 policy to role
-resource "aws_iam_role_policy_attachment" "openclaw_s3" {
-  role       = aws_iam_role.openclaw.name
-  policy_arn = aws_iam_policy.openclaw_s3.arn
-}
-
 # Attach SSM policy for session manager access
 resource "aws_iam_role_policy_attachment" "openclaw_ssm" {
   role       = aws_iam_role.openclaw.name

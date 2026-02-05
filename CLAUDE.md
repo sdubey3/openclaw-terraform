@@ -9,7 +9,7 @@ This repository contains Terraform infrastructure for hosting [OpenClaw](https:/
 - Can browse web, manage calendar, handle emails, execute commands
 - Uses Node.js 22+, Docker, and a WebSocket-based gateway architecture
 
-The infrastructure deploys an EC2 instance (on-demand by default, with optional Spot support) with persistent EFS storage, automated backups to S3, and comprehensive monitoring.
+The infrastructure deploys an EC2 instance (on-demand by default, with optional Spot support) with persistent EFS storage, Docker container logging to CloudWatch, and monitoring.
 
 ## Architecture
 
@@ -36,22 +36,19 @@ The infrastructure deploys an EC2 instance (on-demand by default, with optional 
 │  └──────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
                              │
-              ┌──────────────┼──────────────┐
-              ▼              ▼              ▼
-        ┌──────────┐  ┌──────────┐  ┌──────────────┐
-        │    S3    │  │CloudWatch│  │  CloudTrail  │
-        │ Backups  │  │  Alarms  │  │ Audit Logs   │
-        └──────────┘  └──────────┘  └──────────────┘
+                             ▼
+                       ┌──────────┐
+                       │CloudWatch│
+                       │Logs/Alarms│
+                       └──────────┘
 ```
 
 ### Security Features
 
 - **No SSH keys** - Access via SSM Session Manager only
 - **VPC Flow Logs** - Network traffic monitoring
-- **CloudTrail** - API audit logging
 - **Security Groups** - Egress-only by default (optional dashboard access via IP whitelist)
 - **SSM Parameter Store** - Secure secrets management (see `docs/secrets.md`)
-- **S3 encryption** - AES-256 for backups and state
 
 ## Repository Structure
 
@@ -67,10 +64,9 @@ openclaw-terraform/
 │   ├── bootstrap/              # S3 state bucket setup
 │   ├── compute/                # EC2 Spot + On-Demand instances
 │   ├── networking/             # Security groups, VPC Flow Logs
-│   ├── storage/                # EFS + S3 backups
+│   ├── storage/                # EFS persistent storage
 │   ├── iam/                    # Roles, policies, instance profiles
-│   ├── monitoring/             # CloudWatch alarms, SNS alerts
-│   └── cloudtrail/             # API audit logging
+│   └── monitoring/             # CloudWatch alarms, SNS alerts
 ├── templates/
 │   └── user_data.sh.tftpl      # EC2 bootstrap script
 └── docs/
@@ -115,10 +111,9 @@ terraform output ssm_connect_command
 | `bootstrap` | Creates S3 bucket for Terraform state with versioning and encryption |
 | `compute` | EC2 on-demand instance with full container mode (persistent /home/node volume) |
 | `networking` | Security groups (EC2, EFS), VPC Flow Logs to CloudWatch |
-| `storage` | EFS file system with mount target, S3 bucket for daily backups |
-| `iam` | IAM role, instance profile, policies for S3, SSM, CloudWatch |
-| `monitoring` | CloudWatch alarms (CPU, disk, memory), SNS topic for alerts |
-| `cloudtrail` | CloudTrail trail with dedicated S3 bucket for API audit logs |
+| `storage` | EFS file system with mount target and automatic backups |
+| `iam` | IAM role, instance profile, policies for SSM, CloudWatch |
+| `monitoring` | CloudWatch alarms (instance status, memory), SNS topic for alerts |
 
 ## Post-Deployment Setup
 
@@ -154,8 +149,8 @@ terraform output ssm_connect_command
 
 **EFS Storage:**
 - Config directory: `/opt/openclaw/.openclaw` (OpenClaw config, skills, memories)
-- Daily backups: Uploaded to S3 at 3 AM UTC
-- Backup logs: `/var/log/openclaw-backup.log`
+- Automatic backups via AWS Backup (EFS backup policy enabled)
+- Docker container logs streamed to CloudWatch (`/openclaw/production/docker`)
 
 **Docker Volume (Full Container Mode - Always Enabled):**
 - Persistent `/home/node` directory inside container
