@@ -39,7 +39,8 @@ resource "aws_iam_policy" "openclaw_ssm_parameters" {
         Effect = "Allow"
         Action = [
           "ssm:GetParameter",
-          "ssm:GetParameters"
+          "ssm:GetParameters",
+          "ssm:GetParametersByPath"
         ]
         Resource = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter/${var.project_name}/${var.environment}/*"
       }

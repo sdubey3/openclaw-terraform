@@ -1,97 +1,137 @@
-# SSM Parameter Store for Secrets
+# Credential Persistence & Secret Management
 
-This Terraform configuration grants the EC2 instance access to AWS Systems Manager Parameter Store for secure secret management. Use this instead of hardcoding secrets in environment variables or config files.
+## The Problem
+
+OpenClaw runs in a Docker container. The workspace (`/home/node/.openclaw/workspace/`) is on EFS and survives everything. But `~/.config/` lives on a Docker named volume that can be wiped on container rebuilds, volume recreation, or EBS replacement.
+
+Credentials stored in `~/.config/moltbook/`, `~/.config/twitter/`, etc. get lost.
+
+## Solution: Two-Layer Persistence
+
+### Layer 1: EFS Workspace Credentials (Symlinks)
+
+Credentials are stored in the EFS-persistent workspace and symlinked to `~/.config/`:
+
+```
+/home/node/.openclaw/workspace/.credentials/   ← EFS (survives everything)
+  ├── moltbook/credentials.json
+  ├── moltipedia/credentials.json
+  ├── moltslack/credentials.json
+  ├── twilio/credentials.json
+  ├── twitter/cookies.json
+  └── github/app-key.pem
+
+~/.config/moltbook → ../.openclaw/workspace/.credentials/moltbook  ← symlink
+```
+
+The `scripts/restore-credentials.sh` script recreates symlinks on every container start.
+
+### Layer 2: AWS SSM Parameter Store (Encrypted Backup)
+
+Secrets are also stored in SSM Parameter Store as encrypted `SecureString` parameters. On EC2 boot (before the container starts), the `user_data` script pulls all secrets from SSM and writes them to EFS.
+
+This means credentials survive even EFS data loss (unlikely but possible).
 
 ## Storing Secrets
 
-Store secrets in Parameter Store with the path prefix `/openclaw/{environment}/`:
+### From the EC2 host (recommended):
 
 ```bash
-# Store a secret (SecureString encrypts with KMS)
+# Use the helper script
+cd /opt/openclaw/.openclaw/workspace/scripts
+./ssm-store.sh moltbook credentials '{"apiKey":"sk-abc","username":"clawdia_snaps"}'
+./ssm-store.sh twitter cookies '{"ct0":"...","auth_token":"..."}'
+./ssm-store.sh twilio credentials '{"accountSid":"AC...","authToken":"..."}'
+```
+
+This stores in both SSM (encrypted backup) and EFS (immediate access).
+
+### Manually via AWS CLI:
+
+```bash
 aws ssm put-parameter \
-  --name "/openclaw/production/discord-token" \
-  --value "your-discord-bot-token" \
+  --name "/openclaw/production/moltbook/credentials" \
+  --value '{"apiKey":"sk-abc","username":"clawdia_snaps"}' \
   --type "SecureString" \
-  --region us-east-1
-
-# Store another secret
-aws ssm put-parameter \
-  --name "/openclaw/production/api-key" \
-  --value "your-api-key" \
-  --type "SecureString" \
+  --overwrite \
   --region us-east-1
 ```
 
-## Retrieving Secrets on EC2
-
-From the EC2 instance, retrieve secrets using the AWS CLI:
+### From the container (write to EFS directly):
 
 ```bash
-# Get a single secret
-aws ssm get-parameter \
-  --name "/openclaw/production/discord-token" \
-  --with-decryption \
-  --query "Parameter.Value" \
-  --output text \
-  --region us-east-1
+# Write credentials to workspace (persists on EFS)
+mkdir -p /home/node/.openclaw/workspace/.credentials/moltbook
+echo '{"apiKey":"sk-abc"}' > /home/node/.openclaw/workspace/.credentials/moltbook/credentials.json
 
-# Get all secrets with a prefix
-aws ssm get-parameters-by-path \
-  --path "/openclaw/production/" \
-  --with-decryption \
-  --region us-east-1
+# Run restore to create symlinks
+bash /home/node/.openclaw/workspace/scripts/restore-credentials.sh
 ```
 
-## Using Secrets in Applications
+## Restoring Secrets
 
-### Shell Script Example
+### Automatic (on every boot):
+
+1. **EC2 user_data** pulls SSM parameters → writes to EFS `.credentials/`
+2. **Container startup** (via BOOT.md hook) runs `restore-credentials.sh` → creates symlinks
+
+### Manual:
 
 ```bash
-#!/bin/bash
-export DISCORD_TOKEN=$(aws ssm get-parameter \
-  --name "/openclaw/production/discord-token" \
-  --with-decryption \
-  --query "Parameter.Value" \
-  --output text \
-  --region us-east-1)
+# Inside the container
+bash /home/node/.openclaw/workspace/scripts/restore-credentials.sh
 
-# Run your application with the secret
-openclaw start
+# From EC2 host (re-pull from SSM)
+cd /opt/openclaw/.openclaw/workspace/scripts
+bash restore-credentials.sh
 ```
 
-### Node.js Example
+## SSM Parameter Naming
 
-```javascript
-const { SSMClient, GetParameterCommand } = require("@aws-sdk/client-ssm");
+Parameters follow this convention:
 
-const client = new SSMClient({ region: "us-east-1" });
+```
+/openclaw/{environment}/{service}/{key}
 
-async function getSecret(name) {
-  const command = new GetParameterCommand({
-    Name: name,
-    WithDecryption: true,
-  });
-  const response = await client.send(command);
-  return response.Parameter.Value;
-}
-
-// Usage
-const discordToken = await getSecret("/openclaw/production/discord-token");
+Examples:
+  /openclaw/production/moltbook/credentials     → .credentials/moltbook/credentials.json
+  /openclaw/production/twitter/cookies           → .credentials/twitter/cookies.json
+  /openclaw/production/twilio/credentials        → .credentials/twilio/credentials.json
+  /openclaw/production/github/app-key            → .credentials/github/app-key
 ```
 
 ## IAM Permissions
 
-The EC2 instance role has permissions to:
+The EC2 instance role has:
 
-- `ssm:GetParameter` - Read individual parameters
-- `ssm:GetParameters` - Read multiple parameters
-- `ssm:GetParametersByPath` - List and read parameters by path prefix
+- `ssm:GetParameter` — Read individual parameters
+- `ssm:GetParameters` — Read multiple parameters
+- `ssm:GetParametersByPath` — List and read all parameters under a prefix
 
-These permissions are scoped to parameters matching `arn:aws:ssm:*:*:parameter/openclaw/*`.
+Scoped to: `arn:aws:ssm:*:*:parameter/openclaw/*`
 
 ## Security Notes
 
-- Always use `SecureString` type for sensitive values (encrypts with AWS KMS)
-- Parameter Store integrates with CloudTrail for audit logging
-- Secrets are never stored in Terraform state
-- Rotate secrets regularly by updating the parameter value
+- All SSM parameters use `SecureString` (encrypted with AWS KMS)
+- EFS is encrypted at rest
+- `.credentials/` files are chmod 600
+- CloudTrail logs all SSM access
+- Never commit credentials to git (`.credentials/` is in `.gitignore`)
+
+## Files
+
+| File | Location | Purpose |
+|------|----------|---------|
+| `restore-credentials.sh` | `scripts/` | Creates symlinks + pulls SSM secrets |
+| `ssm-pull.js` | `scripts/` | Node.js SSM client (for in-container use) |
+| `ssm-store.sh` | `scripts/` | Store credentials in SSM + EFS |
+| `BOOT.md` | workspace root | Runs restore on gateway startup |
+
+## Adding a New Service
+
+1. Create the directory: `mkdir -p .credentials/myservice`
+2. Write the credential file: `echo '...' > .credentials/myservice/credentials.json`
+3. Run restore: `bash scripts/restore-credentials.sh`
+4. (Optional) Back up to SSM: `./scripts/ssm-store.sh myservice credentials '...'`
+
+The restore script auto-discovers all directories under `.credentials/` — no code changes needed.

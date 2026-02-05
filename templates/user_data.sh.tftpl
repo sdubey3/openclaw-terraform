@@ -31,6 +31,43 @@ EOF
   chown ec2-user:ec2-user "$1/docker-compose.override.yml"
 }
 
+restore_ssm_secrets() {
+  echo "Restoring SSM secrets to EFS..."
+  local creds_dir="${mount_point}/.openclaw/workspace/.credentials"
+  local ssm_prefix="/${project_name}/${environment}"
+  mkdir -p "$creds_dir"
+
+  local params
+  params=$(aws ssm get-parameters-by-path \
+    --path "$ssm_prefix/" \
+    --with-decryption \
+    --recursive \
+    --query "Parameters[*].[Name,Value]" \
+    --output text \
+    --region ${aws_region} 2>/dev/null) || { echo "SSM: query failed (non-fatal)"; return 0; }
+
+  if [ -z "$params" ]; then
+    echo "SSM: no parameters found at $ssm_prefix/"
+    return 0
+  fi
+
+  while IFS=$'\t' read -r name value; do
+    local rel="$${name#$ssm_prefix/}"
+    local service="$${rel%%/*}"
+    local key="$${rel#*/}"
+    local filename="$key"
+    [ "$key" = "credentials" ] && filename="credentials.json"
+
+    mkdir -p "$creds_dir/$service"
+    echo "$value" > "$creds_dir/$service/$filename"
+    chmod 600 "$creds_dir/$service/$filename"
+    echo "SSM: restored $service/$filename"
+  done <<< "$params"
+
+  chown -R ec2-user:ec2-user "$creds_dir"
+  echo "SSM: secret restore complete"
+}
+
 install_pw_browsers() {
   [ "$INSTALL_PLAYWRIGHT_BROWSERS" != "true" ] && return 0
   cd "$1"
@@ -77,6 +114,7 @@ sleep 3
 
 if [ -s "$CFG/.env" ] && [ -s "$CFG/openclaw.json" ] && [ -s "$REPO/docker-compose.yml" ] && grep -q "OPENCLAW_GATEWAY_TOKEN" "$CFG/.env" 2>/dev/null; then
   echo "Auto-resuming..."
+  restore_ssm_secrets
   cd $REPO
   [ -d .git ] && sudo -u ec2-user git pull origin main 2>&1 || { cd ${mount_point}; rm -rf openclaw-docker; sudo -u ec2-user git clone --depth 1 https://github.com/openclaw/openclaw.git openclaw-docker; }
   chown -R ec2-user:ec2-user $REPO
@@ -104,6 +142,7 @@ if [ -s "$CFG/.env" ] && [ -s "$CFG/openclaw.json" ] && [ -s "$REPO/docker-compo
   fi
 else
   echo "First-time setup required"
+  restore_ssm_secrets
   [ ! -d "$REPO" ] && { git clone --depth 1 https://github.com/openclaw/openclaw.git $REPO; chown -R ec2-user:ec2-user $REPO; }
   export OPENCLAW_CONFIG_DIR=$CFG OPENCLAW_WORKSPACE_DIR=$CFG/workspace
   create_compose_override "$REPO"
