@@ -1,0 +1,45 @@
+# Terraform state files
+*.tfstate
+*.tfstate.*
+
+# Terraform lock file (optional - some teams commit this)
+.terraform.lock.hcl
+
+# Terraform directory
+.terraform/
+
+# Variable files with secrets
+terraform.tfvars
+*.auto.tfvars
+
+# Crash log files
+crash.log
+crash.*.log
+
+# Override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# CLI configuration files
+.terraformrc
+terraform.rc
+
+# Backup files
+*.backup
+
+# Plan files (contain full state)
+tfplan
+*.tfplan
+
+# Backend config with account-specific values
+*.tfbackend
+!*.tfbackend.example
+
+# Claude Code settings
+.claude/
+
+# Private keys
+*.pem
+*.key

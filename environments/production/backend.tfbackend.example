@@ -1,0 +1,3 @@
+bucket  = "openclaw-terraform-state-YOUR_ACCOUNT_ID"
+region  = "us-east-1"
+profile = "admin"  # Your AWS SSO profile name
