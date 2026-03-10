@@ -17,11 +17,17 @@ variable "project_name" {
 variable "enable_flow_logs" {
   description = "Enable VPC Flow Logs for network monitoring"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "dashboard_allowed_ip" {
   description = "IP address (CIDR format) allowed to access OpenClaw dashboard on port 18789. Leave empty for no inbound access."
+  type        = string
+  default     = ""
+}
+
+variable "ssh_allowed_cidr" {
+  description = "CIDR block allowed to SSH to the EC2 instance on port 22. Leave empty for no SSH access (SSM only)."
   type        = string
   default     = ""
 }

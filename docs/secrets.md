@@ -2,7 +2,7 @@
 
 ## The Problem
 
-OpenClaw runs in a Docker container. The workspace (`/home/node/.openclaw/workspace/`) is on EFS and survives everything. But `~/.config/` lives on a Docker named volume that can be wiped on container rebuilds, volume recreation, or EBS replacement.
+OpenClaw runs directly on the EC2 host (Ubuntu 24.04). The workspace (`/home/ubuntu/.openclaw/workspace/`) is symlinked to EFS and survives instance replacement. But `~/.config/` lives on the root EBS volume, which is lost when an instance is terminated and replaced.
 
 Credentials stored in `~/.config/moltbook/`, `~/.config/twitter/`, etc. get lost.
 
@@ -13,7 +13,7 @@ Credentials stored in `~/.config/moltbook/`, `~/.config/twitter/`, etc. get lost
 Credentials are stored in the EFS-persistent workspace and symlinked to `~/.config/`:
 
 ```
-/home/node/.openclaw/workspace/.credentials/   ← EFS (survives everything)
+/home/ubuntu/.openclaw/workspace/.credentials/   <- EFS (survives everything)
   ├── moltbook/credentials.json
   ├── moltipedia/credentials.json
   ├── moltslack/credentials.json
@@ -21,14 +21,14 @@ Credentials are stored in the EFS-persistent workspace and symlinked to `~/.conf
   ├── twitter/cookies.json
   └── github/app-key.pem
 
-~/.config/moltbook → ../.openclaw/workspace/.credentials/moltbook  ← symlink
+~/.config/moltbook -> ../.openclaw/workspace/.credentials/moltbook  <- symlink
 ```
 
-The `scripts/restore-credentials.sh` script recreates symlinks on every container start.
+The `scripts/restore-credentials.sh` script recreates symlinks on every startup.
 
 ### Layer 2: AWS SSM Parameter Store (Encrypted Backup)
 
-Secrets are also stored in SSM Parameter Store as encrypted `SecureString` parameters. On EC2 boot (before the container starts), the `user_data` script pulls all secrets from SSM and writes them to EFS.
+Secrets are also stored in SSM Parameter Store as encrypted `SecureString` parameters. On EC2 boot, the `user_data` script pulls all secrets from SSM and writes them to EFS.
 
 This means credentials survive even EFS data loss (unlikely but possible).
 
@@ -57,31 +57,28 @@ aws ssm put-parameter \
   --region us-east-1
 ```
 
-### From the container (write to EFS directly):
+### Directly on the host:
 
 ```bash
 # Write credentials to workspace (persists on EFS)
-mkdir -p /home/node/.openclaw/workspace/.credentials/moltbook
-echo '{"apiKey":"sk-abc"}' > /home/node/.openclaw/workspace/.credentials/moltbook/credentials.json
+mkdir -p /home/ubuntu/.openclaw/workspace/.credentials/moltbook
+echo '{"apiKey":"sk-abc"}' > /home/ubuntu/.openclaw/workspace/.credentials/moltbook/credentials.json
 
 # Run restore to create symlinks
-bash /home/node/.openclaw/workspace/scripts/restore-credentials.sh
+bash /home/ubuntu/.openclaw/workspace/scripts/restore-credentials.sh
 ```
 
 ## Restoring Secrets
 
 ### Automatic (on every boot):
 
-1. **EC2 user_data** pulls SSM parameters → writes to EFS `.credentials/`
-2. **Container startup** (via BOOT.md hook) runs `restore-credentials.sh` → creates symlinks
+1. **EC2 user_data** pulls SSM parameters -> writes to EFS `.credentials/`
+2. **OpenClaw startup** (via BOOT.md hook) runs `restore-credentials.sh` -> creates symlinks
 
 ### Manual:
 
 ```bash
-# Inside the container
-bash /home/node/.openclaw/workspace/scripts/restore-credentials.sh
-
-# From EC2 host (re-pull from SSM)
+# Re-pull from SSM and create symlinks
 cd /opt/openclaw/.openclaw/workspace/scripts
 bash restore-credentials.sh
 ```
@@ -94,19 +91,19 @@ Parameters follow this convention:
 /openclaw/{environment}/{service}/{key}
 
 Examples:
-  /openclaw/production/moltbook/credentials     → .credentials/moltbook/credentials.json
-  /openclaw/production/twitter/cookies           → .credentials/twitter/cookies.json
-  /openclaw/production/twilio/credentials        → .credentials/twilio/credentials.json
-  /openclaw/production/github/app-key            → .credentials/github/app-key
+  /openclaw/production/moltbook/credentials     -> .credentials/moltbook/credentials.json
+  /openclaw/production/twitter/cookies           -> .credentials/twitter/cookies.json
+  /openclaw/production/twilio/credentials        -> .credentials/twilio/credentials.json
+  /openclaw/production/github/app-key            -> .credentials/github/app-key
 ```
 
 ## IAM Permissions
 
 The EC2 instance role has:
 
-- `ssm:GetParameter` — Read individual parameters
-- `ssm:GetParameters` — Read multiple parameters
-- `ssm:GetParametersByPath` — List and read all parameters under a prefix
+- `ssm:GetParameter` -- Read individual parameters
+- `ssm:GetParameters` -- Read multiple parameters
+- `ssm:GetParametersByPath` -- List and read all parameters under a prefix
 
 Scoped to: `arn:aws:ssm:*:*:parameter/openclaw/*`
 
@@ -123,7 +120,7 @@ Scoped to: `arn:aws:ssm:*:*:parameter/openclaw/*`
 | File | Location | Purpose |
 |------|----------|---------|
 | `restore-credentials.sh` | `scripts/` | Creates symlinks + pulls SSM secrets |
-| `ssm-pull.js` | `scripts/` | Node.js SSM client (for in-container use) |
+| `ssm-pull.js` | `scripts/` | Node.js SSM client (for scripted use) |
 | `ssm-store.sh` | `scripts/` | Store credentials in SSM + EFS |
 | `BOOT.md` | workspace root | Runs restore on gateway startup |
 
@@ -134,4 +131,4 @@ Scoped to: `arn:aws:ssm:*:*:parameter/openclaw/*`
 3. Run restore: `bash scripts/restore-credentials.sh`
 4. (Optional) Back up to SSM: `./scripts/ssm-store.sh myservice credentials '...'`
 
-The restore script auto-discovers all directories under `.credentials/` — no code changes needed.
+The restore script auto-discovers all directories under `.credentials/` -- no code changes needed.

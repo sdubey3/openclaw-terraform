@@ -3,19 +3,14 @@ aws_region = "us-east-1"
 
 # Instance Configuration
 instance_type = "t3.medium" # Recommended: t3.medium (4GB RAM)
-# Note: On-demand instances only (spot support removed for stability)
-# Full container mode is always enabled (persistent /home/node, Homebrew, CLI tools)
 
 # Project Configuration
 project_name = "openclaw"
 environment  = "production"
 
-# Alerting (optional but recommended)
-alert_email = "your-email@example.com" # Receives CloudWatch alerts
+# SSH Access (recommended)
+# public_key       = "ssh-ed25519 AAAA... your-email@example.com"
+# ssh_allowed_cidr = "203.0.113.1/32"  # Your IP address
 
 # Remote Dashboard Access (optional - set to "" for SSM-only access)
 # dashboard_allowed_ip = "203.0.113.1/32"
-
-# Full Container Mode Customization (optional)
-# openclaw_home_volume = "openclaw_home"              # Docker volume name
-# install_playwright_browsers = true                  # Auto-install browsers on resume

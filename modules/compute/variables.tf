@@ -45,23 +45,10 @@ variable "aws_region" {
   type        = string
 }
 
-# Full-featured container variables (always enabled)
-variable "openclaw_home_volume" {
-  description = "Docker named volume for persistent /home/node in the container"
-  type        = string
-  default     = "openclaw_home"
-}
-
-variable "openclaw_docker_apt_packages" {
-  description = "Space-separated list of APT packages to install in the Docker image for Playwright support"
+variable "key_name" {
+  description = "EC2 key pair name for SSH access"
   type        = string
   default     = ""
-}
-
-variable "install_playwright_browsers" {
-  description = "Automatically install Playwright browsers on auto-resume"
-  type        = bool
-  default     = true
 }
 
 variable "root_volume_size" {

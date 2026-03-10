@@ -25,10 +25,3 @@ resource "aws_efs_mount_target" "openclaw" {
   security_groups = [var.efs_security_group_id]
 }
 
-# EFS backup policy
-resource "aws_efs_backup_policy" "openclaw" {
-  file_system_id = aws_efs_file_system.openclaw_data.id
-  backup_policy {
-    status = "ENABLED"
-  }
-}

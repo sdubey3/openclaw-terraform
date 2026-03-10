@@ -7,47 +7,43 @@ This repository contains Terraform infrastructure for hosting [OpenClaw](https:/
 - Runs locally on your machine (Mac, Windows, Linux)
 - Integrates with WhatsApp, Telegram, Discord, Slack, Signal, iMessage
 - Can browse web, manage calendar, handle emails, execute commands
-- Uses Node.js 22+, Docker, and a WebSocket-based gateway architecture
+- Uses Node.js 22+, and a WebSocket-based gateway architecture
 
-The infrastructure deploys an EC2 instance (on-demand by default, with optional Spot support) with persistent EFS storage, Docker container logging to CloudWatch, and monitoring.
+The infrastructure deploys an EC2 instance (Ubuntu 24.04) with OpenClaw installed directly via npm, persistent EFS storage, CloudWatch monitoring, and SSH access.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        Default VPC                          │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │                    EC2 Instance                      │   │
-│  │  ┌────────────────────────────────────────────────┐  │   │
-│  │  │  Amazon Linux 2023 (t3.medium)                 │  │   │
-│  │  │  - Docker + Docker Compose                     │  │   │
-│  │  │  - Node.js 22                                  │  │   │
-│  │  │  - OpenClaw Gateway (port 18789)               │  │   │
-│  │  │  - CloudWatch Agent                            │  │   │
-│  │  │  - SSM Agent (Session Manager access)          │  │   │
-│  │  └────────────────────────────────────────────────┘  │   │
-│  └──────────────────────────────────────────────────────┘   │
-│                            │                                 │
-│                            ▼                                 │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │                    EFS Mount                         │   │
-│  │  /opt/openclaw/.openclaw (config, workspace)         │   │
-│  │  /opt/openclaw/openclaw-docker (cloned repo)         │   │
-│  └──────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-                             │
-                             ▼
-                       ┌──────────┐
-                       │CloudWatch│
-                       │Logs/Alarms│
-                       └──────────┘
+┌──────────────────────────────────────────────────────┐
+│                     Default VPC                       │
+│  ┌────────────────────────────────────────────────┐   │
+│  │               EC2 Instance                     │   │
+│  │  Ubuntu 24.04 (t3.medium)                      │   │
+│  │  - Node.js 22 + OpenClaw (npm global)          │   │
+│  │  - systemd service (openclaw-gateway)          │   │
+│  │  - CloudWatch Agent                            │   │
+│  │  - SSH access (port 22) + SSM fallback         │   │
+│  └────────────────────────────────────────────────┘   │
+│                         │                             │
+│  ┌────────────────────────────────────────────────┐   │
+│  │                 EFS Mount                      │   │
+│  │  /opt/openclaw/.openclaw (config, workspace)   │   │
+│  └────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────┘
+                          │
+                          ▼
+                    ┌──────────┐
+                    │CloudWatch│
+                    │Logs/Alarms│
+                    └──────────┘
 ```
 
 ### Security Features
 
-- **No SSH keys** - Access via SSM Session Manager only
+- **SSH access** - Terraform-managed key pair, restricted by CIDR
+- **SSM Session Manager** - Fallback access (no SSH key needed)
 - **VPC Flow Logs** - Network traffic monitoring
-- **Security Groups** - Egress-only by default (optional dashboard access via IP whitelist)
+- **Security Groups** - SSH and dashboard access restricted by IP whitelist
 - **SSM Parameter Store** - Secure secrets management (see `docs/secrets.md`)
 
 ## Repository Structure
@@ -57,18 +53,18 @@ openclaw-terraform/
 ├── environments/production/    # Main Terraform configuration
 │   ├── main.tf                 # Module composition
 │   ├── variables.tf            # Input variables
-│   ├── outputs.tf              # Outputs (SSM command, etc.)
+│   ├── outputs.tf              # Outputs (SSH/SSM commands, etc.)
 │   ├── providers.tf            # AWS provider config
 │   └── versions.tf             # Terraform version constraints
 ├── modules/
 │   ├── bootstrap/              # S3 state bucket setup
-│   ├── compute/                # EC2 Spot + On-Demand instances
+│   ├── compute/                # EC2 instance with direct OpenClaw install
 │   ├── networking/             # Security groups, VPC Flow Logs
 │   ├── storage/                # EFS persistent storage
 │   ├── iam/                    # Roles, policies, instance profiles
 │   └── monitoring/             # CloudWatch alarms, SNS alerts
 ├── templates/
-│   └── user_data.sh.tftpl      # EC2 bootstrap script
+│   └── user_data.sh.tftpl      # EC2 bootstrap script (Ubuntu 24.04)
 └── docs/
     └── secrets.md              # SSM Parameter Store guide
 ```
@@ -105,7 +101,8 @@ terraform plan
 # Deploy infrastructure
 terraform apply
 
-# Get the SSM connect command
+# Get connection commands
+terraform output ssh_connect_command
 terraform output ssm_connect_command
 ```
 
@@ -114,7 +111,7 @@ terraform output ssm_connect_command
 | Module | Purpose |
 |--------|---------|
 | `bootstrap` | Creates S3 bucket for Terraform state with versioning and encryption |
-| `compute` | EC2 on-demand instance with full container mode (persistent /home/node volume) |
+| `compute` | EC2 instance with Ubuntu 24.04, Node.js 22, OpenClaw via npm |
 | `networking` | Security groups (EC2, EFS), VPC Flow Logs to CloudWatch |
 | `storage` | EFS file system with mount target and automatic backups |
 | `iam` | IAM role, instance profile, policies for SSM, CloudWatch |
@@ -124,55 +121,48 @@ terraform output ssm_connect_command
 
 1. **Connect to the instance:**
    ```bash
+   ssh -i <your-private-key> ubuntu@<instance-public-ip>
+   ```
+
+   Or via SSM:
+   ```bash
    aws ssm start-session --target <instance-id> --region us-east-1 --profile admin
    ```
 
-2. **Switch to ec2-user** (SSM starts as `ssm-user`, not `ec2-user`):
+2. **Run the setup helper (first time only):**
    ```bash
-   sudo su - ec2-user
+   openclaw-setup
    ```
 
-3. **Run OpenClaw setup:**
-   ```bash
-   cd /opt/openclaw/openclaw-docker
-   ./docker-setup.sh
-   ```
+   This runs `openclaw onboard` (interactive) and starts the systemd service.
 
-   > **Important:** Do NOT run the setup script with `sudo`. The script must run as `ec2-user` so Docker bind mounts have correct ownership for the container's `node` user.
-
-4. **The setup script will:**
-   - Build the Docker image
-   - Run the onboarding wizard (interactive)
-   - Generate a gateway token (saved to `.env`)
-   - Start the gateway
-
-5. **Access the Control UI:**
+3. **Access the Control UI:**
    - URL: `http://127.0.0.1:18789/`
-   - Paste the token from `.env` into Settings
+   - Paste the token from `/opt/openclaw/.openclaw/.env` into Settings
 
 ### Data Persistence
 
 **EFS Storage:**
 - Config directory: `/opt/openclaw/.openclaw` (OpenClaw config, skills, memories)
+- Symlinked from `/home/ubuntu/.openclaw`
 - Automatic backups via AWS Backup (EFS backup policy enabled)
-- Docker container logs streamed to CloudWatch (`/openclaw/production/docker`)
 
-**Docker Volume (Full Container Mode - Always Enabled):**
-- Persistent `/home/node` directory inside container
-- Includes: Homebrew, CLI tools (gog, gh), auth tokens, npm cache, Playwright browsers
-- Survives container rebuilds and instance recreation
+**Local disk:**
+- Playwright browsers at `~/.cache/ms-playwright/` (reinstalled on instance replacement, ~2-3 min)
+- npm global packages on root EBS
 
 ### Automatic Resume on Instance Restart
 
-OpenClaw automatically resumes after instance restarts (reboots, spot replacement, or recreation) without manual intervention.
+OpenClaw automatically resumes after instance restarts (reboots or recreation) without manual intervention.
 
 **How It Works:**
 
 When an instance launches, the user_data script:
-1. Mounts EFS with persistent config
-2. Detects existing `.env` and `openclaw.json`
-3. Automatically starts the gateway service
-4. Typical resume time: 5-7 minutes
+1. Installs Node.js 22 and OpenClaw via npm
+2. Mounts EFS with persistent config
+3. Detects existing `.env` and `openclaw.json`
+4. Starts the gateway via `systemctl enable --now openclaw-gateway`
+5. Typical resume time: 5-7 minutes
 
 **Verification:**
 
@@ -195,12 +185,12 @@ aws cloudwatch get-metric-statistics \
 
 **Manual Override:**
 
-To stop auto-started service:
+To stop/restart the gateway:
 ```bash
-aws ssm start-session --target <instance-id> --region us-east-1 --profile admin
-sudo su - ec2-user
-cd /opt/openclaw/openclaw-docker
-docker compose down
+ssh -i <key> ubuntu@<ip>
+sudo systemctl stop openclaw-gateway
+sudo systemctl start openclaw-gateway
+journalctl -u openclaw-gateway -f
 ```
 
 **Troubleshooting:**
@@ -210,20 +200,20 @@ If auto-resume fails:
 2. Look for `InstanceResumeFailure` metric with reason dimension
 3. Common issues:
    - Missing or corrupted `.env` file
-   - Docker image missing (will auto-rebuild)
+   - Missing gateway token
    - Port 18789 already in use
-4. Manual recovery: SSH in and run `docker-setup.sh`
+4. Manual recovery: SSH in and run `openclaw-setup`
 
 **First-Time Setup:**
 
 Auto-resume only works after initial onboarding. For first deployment:
 1. Follow standard setup instructions in "Post-Deployment Setup"
-2. Complete onboarding via `docker-setup.sh`
+2. Complete onboarding via `openclaw-setup`
 3. After onboarding, all future instance restarts will auto-resume
 
 ### Remote Dashboard Access (Optional)
 
-By default, the OpenClaw dashboard is only accessible via SSM Session Manager. To enable remote access from your IP:
+By default, the OpenClaw dashboard is only accessible locally. To enable remote access from your IP:
 
 1. **Configure your IP address:**
    ```hcl
@@ -243,40 +233,6 @@ By default, the OpenClaw dashboard is only accessible via SSM Session Manager. T
    - Enter the gateway token from your OpenClaw setup
 
 **Security Note:** Only the specified IP address can access the dashboard. To disable remote access, set `dashboard_allowed_ip = ""` and run `terraform apply`.
-
-### Full-Featured Container Mode (Always Enabled)
-
-The infrastructure now runs in full-featured container mode by default, which provides:
-
-**Persistent Storage:**
-- Docker named volume (`openclaw_home`) automatically created for `/home/node`
-- Homebrew installations persist across container rebuilds
-- CLI tools (gog, gh, etc.) persist across instance recreation
-- Authentication tokens persist in `/home/node/.config/`
-- npm cache and Playwright browsers persist
-
-**Automatic Setup:**
-- `docker-compose.override.yml` automatically created on instance boot
-- Playwright browsers auto-install on instance restart (configurable)
-- `install-playwright.sh` script created for manual browser installation
-
-**Customization:**
-```hcl
-# Custom volume name (in terraform.tfvars)
-openclaw_home_volume = "my_custom_volume"
-
-# Custom APT packages (default includes Playwright deps)
-openclaw_docker_apt_packages = "libnss3 libnspr4 ..."
-
-# Disable auto-install of browsers on resume
-install_playwright_browsers = false
-```
-
-**Manual Playwright Installation:**
-After completing `docker-setup.sh`, you can manually install browsers:
-```bash
-./install-playwright.sh
-```
 
 ## Development Guidelines
 
@@ -338,7 +294,7 @@ When working with this repository, **never use `head` or `tail` commands** to re
 | `environment` | `production` | Environment tag |
 | `project_name` | `openclaw` | Project name for resource naming |
 | `alert_email` | `""` | Email for CloudWatch alert notifications |
+| `public_key` | `""` | SSH public key content for EC2 access |
+| `ssh_allowed_cidr` | `""` | CIDR block for SSH access (port 22) |
 | `dashboard_allowed_ip` | `""` | IP address (CIDR) for dashboard access (port 18789) |
-| `openclaw_home_volume` | `openclaw_home` | Docker volume name for /home/node (always enabled) |
-| `openclaw_docker_apt_packages` | `<playwright deps>` | APT packages for Playwright support (always installed) |
 | `install_playwright_browsers` | `true` | Auto-install Playwright browsers on resume |

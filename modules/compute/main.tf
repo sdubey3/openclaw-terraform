@@ -1,4 +1,4 @@
-# On-demand instance for OpenClaw bot (full container mode always enabled)
+# On-demand instance for OpenClaw (Ubuntu 24.04, direct npm install)
 resource "aws_instance" "openclaw" {
 
   ami                    = var.ami_id
@@ -6,16 +6,14 @@ resource "aws_instance" "openclaw" {
   subnet_id              = var.subnet_id
   vpc_security_group_ids = [var.security_group_id]
   iam_instance_profile   = var.instance_profile_name
+  key_name               = var.key_name
 
   user_data = base64encode(templatefile("${path.module}/../../templates/user_data.sh.tftpl", {
-    efs_id                       = var.efs_id
-    mount_point                  = "/opt/openclaw"
-    aws_region                   = var.aws_region
-    project_name                 = var.project_name
-    environment                  = var.environment
-    openclaw_home_volume         = var.openclaw_home_volume
-    openclaw_docker_apt_packages = var.openclaw_docker_apt_packages
-    install_playwright_browsers  = var.install_playwright_browsers
+    efs_id       = var.efs_id
+    mount_point  = "/opt/openclaw"
+    aws_region   = var.aws_region
+    project_name = var.project_name
+    environment  = var.environment
   }))
 
   root_block_device {

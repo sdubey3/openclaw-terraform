@@ -26,6 +26,23 @@ resource "aws_vpc_security_group_egress_rule" "all_outbound" {
   }
 }
 
+# Conditional SSH access (port 22)
+# Only created when ssh_allowed_cidr is specified
+resource "aws_vpc_security_group_ingress_rule" "ssh_access" {
+  count = var.ssh_allowed_cidr != "" ? 1 : 0
+
+  security_group_id = aws_security_group.openclaw.id
+  description       = "Allow SSH access from specified CIDR"
+  ip_protocol       = "tcp"
+  from_port         = 22
+  to_port           = 22
+  cidr_ipv4         = var.ssh_allowed_cidr
+
+  tags = {
+    Name = "${var.project_name}-ssh-access"
+  }
+}
+
 # Conditional inbound access to OpenClaw dashboard (port 18789)
 # Only created when dashboard_allowed_ip is specified
 resource "aws_vpc_security_group_ingress_rule" "dashboard_access" {

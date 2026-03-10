@@ -1,47 +1,43 @@
 # OpenClaw Terraform Infrastructure
 
-Terraform modules for hosting [OpenClaw](https://github.com/openclaw/openclaw) on AWS. Deploys a single EC2 instance with persistent EFS storage, Docker, CloudWatch monitoring, and SSM-based access (no SSH keys).
+Terraform modules for hosting [OpenClaw](https://github.com/openclaw/openclaw) on AWS. Deploys a single EC2 instance (Ubuntu 24.04) with OpenClaw installed directly via npm, persistent EFS storage, CloudWatch monitoring, and SSH access.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        Default VPC                          │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │                    EC2 Instance                      │   │
-│  │  ┌────────────────────────────────────────────────┐  │   │
-│  │  │  Amazon Linux 2023 (t3.medium)                 │  │   │
-│  │  │  - Docker + Docker Compose                     │  │   │
-│  │  │  - Node.js 22                                  │  │   │
-│  │  │  - OpenClaw Gateway (port 18789)               │  │   │
-│  │  │  - CloudWatch Agent                            │  │   │
-│  │  │  - SSM Agent (Session Manager access)          │  │   │
-│  │  └────────────────────────────────────────────────┘  │   │
-│  └──────────────────────────────────────────────────────┘   │
-│                            │                                 │
-│                            ▼                                 │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │                    EFS Mount                         │   │
-│  │  /opt/openclaw/.openclaw (config, workspace)         │   │
-│  │  /opt/openclaw/openclaw-docker (cloned repo)         │   │
-│  └──────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-                             │
-                             ▼
-                       ┌──────────┐
-                       │CloudWatch│
-                       │Logs/Alarms│
-                       └──────────┘
+┌──────────────────────────────────────────────────────┐
+│                     Default VPC                       │
+│  ┌────────────────────────────────────────────────┐   │
+│  │               EC2 Instance                     │   │
+│  │  Ubuntu 24.04 (t3.medium)                      │   │
+│  │  - Node.js 22 + OpenClaw (npm global)          │   │
+│  │  - systemd service (openclaw-gateway)          │   │
+│  │  - CloudWatch Agent                            │   │
+│  │  - SSH access (port 22) + SSM fallback         │   │
+│  └────────────────────────────────────────────────┘   │
+│                         │                             │
+│  ┌────────────────────────────────────────────────┐   │
+│  │                 EFS Mount                      │   │
+│  │  /opt/openclaw/.openclaw (config, workspace)   │   │
+│  └────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────┘
+                          │
+                          ▼
+                    ┌──────────┐
+                    │CloudWatch│
+                    │Logs/Alarms│
+                    └──────────┘
 ```
 
 ## Features
 
-- **No SSH keys** — access via AWS SSM Session Manager only
-- **Persistent storage** — EFS for config + Docker named volume for `/home/node`
-- **Auto-resume** — OpenClaw gateway restarts automatically after instance reboots
-- **Monitoring** — CloudWatch alarms for instance status and memory, SNS alerts
-- **VPC Flow Logs** — network traffic monitoring
-- **Secrets via SSM Parameter Store** — no secrets in code (see [`docs/secrets.md`](docs/secrets.md))
+- **SSH access** -- Terraform-managed key pair, restricted by CIDR
+- **SSM fallback** -- AWS Session Manager for keyless access
+- **Persistent storage** -- EFS for config and workspace
+- **Auto-resume** -- OpenClaw gateway restarts automatically after instance reboots
+- **Monitoring** -- CloudWatch alarms for instance status and memory, SNS alerts
+- **VPC Flow Logs** -- network traffic monitoring
+- **Secrets via SSM Parameter Store** -- no secrets in code (see [`docs/secrets.md`](docs/secrets.md))
 
 ## Prerequisites
 
@@ -61,7 +57,7 @@ cd environments/production
 
 # 1. Configure backend with your AWS account ID
 cp backend.tfbackend.example backend.tfbackend
-# Edit backend.tfbackend — replace YOUR_ACCOUNT_ID with your AWS account ID
+# Edit backend.tfbackend -- replace YOUR_ACCOUNT_ID with your AWS account ID
 
 # 2. Bootstrap the state bucket (first time only)
 cd ../../modules/bootstrap
@@ -74,29 +70,27 @@ terraform plan
 terraform apply
 
 # 4. Connect to the instance
-$(terraform output -raw ssm_connect_command)
+ssh -i <your-private-key> ubuntu@$(terraform output -raw instance_public_ip)
 ```
 
 ## Post-Deployment Setup
 
-Once connected via SSM:
+Once connected via SSH:
 
 ```bash
-sudo su - ec2-user
-cd /opt/openclaw/openclaw-docker
-./docker-setup.sh        # Do NOT run with sudo
+openclaw-setup
 ```
 
-The setup script builds the Docker image, runs the onboarding wizard, and starts the gateway. After initial setup, the gateway auto-resumes on every instance restart.
+The setup helper runs `openclaw onboard` (interactive wizard) and starts the gateway via systemd. After initial setup, the gateway auto-resumes on every instance restart.
 
-See [AGENTS.md](AGENTS.md) for full documentation on data persistence, auto-resume, remote dashboard access, and container customization.
+See [AGENTS.md](AGENTS.md) for full documentation on data persistence, auto-resume, remote dashboard access, and troubleshooting.
 
 ## Modules
 
 | Module | Purpose |
 |--------|---------|
 | `bootstrap` | S3 bucket for Terraform state (versioning + encryption) |
-| `compute` | EC2 instance with Docker and full container mode |
+| `compute` | EC2 instance with Ubuntu 24.04, Node.js 22, OpenClaw via npm |
 | `networking` | Security groups (EC2, EFS), VPC Flow Logs |
 | `storage` | EFS file system with mount target and automatic backups |
 | `iam` | IAM role, instance profile, SSM + CloudWatch policies |
@@ -112,7 +106,10 @@ See [AGENTS.md](AGENTS.md) for full documentation on data persistence, auto-resu
 | `environment` | `production` | Environment tag |
 | `project_name` | `openclaw` | Resource naming prefix |
 | `alert_email` | `""` | CloudWatch alert email |
+| `public_key` | `""` | SSH public key content |
+| `ssh_allowed_cidr` | `""` | CIDR for SSH access (port 22) |
 | `dashboard_allowed_ip` | `""` | IP CIDR for remote dashboard access |
+| `install_playwright_browsers` | `true` | Auto-install Playwright browsers on resume |
 
 See [`environments/production/terraform.tfvars.example`](environments/production/terraform.tfvars.example) for a full example.
 
@@ -131,7 +128,7 @@ Contributions are welcome! Here's how to get started:
 3. **Structure your changes:**
    - Module changes go in `modules/<module>/`
    - Environment wiring goes in `environments/production/`
-   - Sensitive values must use SSM Parameter Store — never hardcode secrets
+   - Sensitive values must use SSM Parameter Store -- never hardcode secrets
 
 4. **Test your changes:**
    ```bash
@@ -145,7 +142,7 @@ Contributions are welcome! Here's how to get started:
 
 ### Guidelines
 
-- Keep PRs focused — one logical change per PR
+- Keep PRs focused -- one logical change per PR
 - Add or update variable descriptions and validation blocks when adding new inputs
 - Don't modify the `bootstrap` module after initial setup (it manages the state bucket)
 - Use explicit resource references over `depends_on` when possible

@@ -1,11 +1,11 @@
-# Data source for latest Amazon Linux 2023 AMI
-data "aws_ami" "amazon_linux_2023" {
+# Data source for latest Ubuntu 24.04 AMI
+data "aws_ami" "ubuntu_2404" {
   most_recent = true
-  owners      = ["amazon"]
+  owners      = ["099720109477"] # Canonical
 
   filter {
     name   = "name"
-    values = ["al2023-ami-*-x86_64"]
+    values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"]
   }
 
   filter {
@@ -45,6 +45,14 @@ data "aws_subnet" "selected" {
 # Get current AWS account ID
 data "aws_caller_identity" "current" {}
 
+# SSH key pair (only created when public_key is provided)
+resource "aws_key_pair" "openclaw" {
+  count = var.public_key != "" ? 1 : 0
+
+  key_name   = "${var.project_name}-${var.environment}"
+  public_key = var.public_key
+}
+
 # Networking module - no dependencies
 module "networking" {
   source = "../../modules/networking"
@@ -53,6 +61,7 @@ module "networking" {
   environment          = var.environment
   project_name         = var.project_name
   dashboard_allowed_ip = var.dashboard_allowed_ip
+  ssh_allowed_cidr     = var.ssh_allowed_cidr
 }
 
 # Storage module - depends on networking for EFS security group
@@ -77,11 +86,10 @@ module "iam" {
 
 # Compute module - depends on all other modules
 # depends_on ensures EFS mount target DNS is ready before instance boots
-# Full container mode is always enabled (persistent /home/node, Homebrew, CLI tools, Playwright)
 module "compute" {
   source = "../../modules/compute"
 
-  ami_id                = data.aws_ami.amazon_linux_2023.id
+  ami_id                = data.aws_ami.ubuntu_2404.id
   instance_type         = var.instance_type
   subnet_id             = data.aws_subnet.selected.id
   security_group_id     = module.networking.ec2_security_group_id
@@ -91,21 +99,7 @@ module "compute" {
   project_name          = var.project_name
   aws_region            = var.aws_region
   root_volume_size      = var.root_volume_size
-
-  # Full-featured container support (always enabled)
-  openclaw_home_volume         = var.openclaw_home_volume
-  openclaw_docker_apt_packages = var.openclaw_docker_apt_packages
-  install_playwright_browsers  = var.install_playwright_browsers
+  key_name              = var.public_key != "" ? aws_key_pair.openclaw[0].key_name : ""
 
   depends_on = [module.storage]
-}
-
-# Monitoring module - depends on compute and storage
-module "monitoring" {
-  source = "../../modules/monitoring"
-
-  environment  = var.environment
-  project_name = var.project_name
-  instance_id  = module.compute.instance_id
-  alert_email  = var.alert_email
 }
